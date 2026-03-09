@@ -58,3 +58,9 @@ target/
 
 # local files
 _local/
+
+# IDE
+.idea/
+
+# Custom documentation (local only)
+custom-docs/
