@@ -5,6 +5,7 @@
 *.csv
 dump.rdb
 /mongo-data
+/data/
 apps/js-sdk/node_modules/
 
 apps/api/.env.local
@@ -64,3 +65,7 @@ _local/
 
 # Custom documentation (local only)
 custom-docs/
+
+# Self-hosted env and data
+.env.selfhost
+data/screenshots/

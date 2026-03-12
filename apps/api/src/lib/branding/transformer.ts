@@ -67,6 +67,44 @@ export async function brandingTransformer(
       });
     }
 
+    // Skip LLM enhancement for self-hosted raw data collection
+    if (config.BRANDING_SKIP_LLM) {
+      meta.logger.info(
+        "Skipping branding LLM enhancement (BRANDING_SKIP_LLM=true)",
+      );
+
+      // Apply heuristic logo selection directly (no LLM confirmation needed)
+      if (heuristicResult && logoCandidates.length > 0) {
+        const selectedCandidate = logoCandidates[heuristicResult.selectedIndex];
+        if (selectedCandidate && heuristicResult.confidence >= 0.3) {
+          brandingProfile.images = {
+            ...brandingProfile.images,
+            logo: selectedCandidate.src,
+            logoAlt: selectedCandidate.alt || undefined,
+            logoHref: selectedCandidate.href || undefined,
+          };
+        }
+      }
+
+      // Add metadata indicating LLM was skipped
+      (brandingProfile as any).__llm_metadata = {
+        logoSelection: {
+          llmCalled: false,
+          llmSucceeded: false,
+          finalSource: heuristicResult ? "heuristic" : "none",
+          skippedReason: "BRANDING_SKIP_LLM=true",
+        },
+        buttonClassification: {
+          llmCalled: false,
+          llmSucceeded: false,
+          skippedReason: "BRANDING_SKIP_LLM=true",
+        },
+      };
+
+      // Return early — skip the entire LLM + merge + index mapping block
+      return brandingProfile;
+    }
+
     // Always send logo candidates to the LLM when we have any (confirm or override heuristic)
     // Filter to top 20 candidates for LLM (keeps strong body candidates like alt="X logo" + document.images)
     const { filteredCandidates, indexMap } =
@@ -419,7 +457,7 @@ export async function brandingTransformer(
     };
   }
 
-  if (!isDebugBrandingEnabled(meta)) {
+  if (!isDebugBrandingEnabled(meta) && !config.BRANDING_SKIP_LLM) {
     delete (brandingProfile as any).__button_snapshots;
     delete (brandingProfile as any).__input_snapshots;
     delete (brandingProfile as any).__logo_candidates;

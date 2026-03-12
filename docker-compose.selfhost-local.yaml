@@ -1,0 +1,73 @@
+# docker-compose.selfhost-local.yaml
+# Minimal self-hosted Firecrawl: local filesystem for screenshots (no MinIO, no RabbitMQ)
+#
+# Usage:
+#   ./selfhost.sh up --build -d
+#
+# Screenshots are saved to ./data/screenshots on the host and served via
+# a lightweight nginx container at http://localhost:19000/screenshots/...
+#
+# Host ports (high range to avoid conflicts):
+#   API:           13002
+#   Playwright:    13000
+#   PostgreSQL:    15432
+#   Redis:         16379
+#   File server:   19000
+
+services:
+  # No-op stub — base api depends_on rabbitmq (inherited, can't remove)
+  rabbitmq:
+    image: busybox:latest
+    command: ["sleep", "infinity"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+
+  # Lightweight file server for screenshots
+  file-server:
+    image: nginx:alpine
+    ports:
+      - "19000:80"
+    volumes:
+      - ./data/screenshots:/usr/share/nginx/html:ro
+    networks:
+      - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+        compress: "true"
+
+  api:
+    depends_on:
+      file-server:
+        condition: service_started
+    volumes:
+      - ./data/screenshots:/data/screenshots
+    environment:
+      NUQ_RABBITMQ_URL: ""
+      POSTGRES_HOST: nuq-postgres
+      SCREENSHOT_STORAGE_PROVIDER: local
+      SCREENSHOT_STORAGE_LOCAL_DIR: /data/screenshots
+      SCREENSHOT_STORAGE_LOCAL_PUBLIC_URL: http://localhost:19000
+      BRANDING_SKIP_LLM: "true"
+      DEBUG_BRANDING: "true"
+      USE_DB_AUTHENTICATION: "false"
+      TEST_SUITE_SELF_HOSTED: "true"
+
+  playwright-service:
+    ports:
+      - "13000:3000"
+    environment:
+      BLOCK_MEDIA: "false"
+
+  redis:
+    ports:
+      - "16379:6379"
+
+  nuq-postgres:
+    ports:
+      - "15432:5432"

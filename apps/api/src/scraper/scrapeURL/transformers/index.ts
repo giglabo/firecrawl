@@ -270,15 +270,33 @@ async function deriveBrandingFromActions(
     return document;
   }
 
+  const brandingFormat = hasFormatOfType(meta.options.formats, "branding");
+  const isCustomScript =
+    !!brandingFormat?.customScript || !!config.BRANDING_CUSTOM_SCRIPT_PATH;
+  const shouldSkipProcessor =
+    brandingFormat?.skipProcessor ?? config.BRANDING_SKIP_PROCESSOR === true;
+
   /**
-   * Find the branding return in the actions javascript returns
+   * Find the branding return in the actions javascript returns.
+   * Built-in scripts wrap output in { branding: ... }.
+   * Custom scripts may return arbitrary values.
    * @see src/scraper/scrapeURL/engines/fire-engine/scripts/branding.js
    */
-  const brandingReturnIndex = document.actions?.javascriptReturns?.findIndex(
-    x => x.type === "object" && "branding" in (x.value as any),
-  );
+  let brandingReturnIndex =
+    document.actions?.javascriptReturns?.findIndex(
+      x => x.type === "object" && "branding" in (x.value as any),
+    ) ?? -1;
 
-  if (brandingReturnIndex === -1 || brandingReturnIndex === undefined) {
+  // For custom scripts, fall back to the last JS return if the standard key isn't found
+  if (
+    brandingReturnIndex === -1 &&
+    isCustomScript &&
+    document.actions?.javascriptReturns?.length
+  ) {
+    brandingReturnIndex = document.actions.javascriptReturns.length - 1;
+  }
+
+  if (brandingReturnIndex === -1) {
     return document;
   }
 
@@ -287,11 +305,69 @@ async function deriveBrandingFromActions(
     brandingReturnIndex
   ].value as any;
 
-  const rawBranding = javascriptReturn?.branding;
+  const rawBranding =
+    javascriptReturn &&
+    typeof javascriptReturn === "object" &&
+    "branding" in javascriptReturn
+      ? javascriptReturn.branding
+      : javascriptReturn;
 
   document.actions!.javascriptReturns!.splice(brandingReturnIndex, 1);
 
+  if (shouldSkipProcessor) {
+    // Raw passthrough -- custom scripts get their output directly
+    document.branding = rawBranding as any;
+    return document;
+  }
+
   document.branding = await brandingTransformer(meta, document, rawBranding);
+
+  return document;
+}
+
+async function deriveDnaFromActions(
+  meta: Meta,
+  document: Document,
+): Promise<Document> {
+  const hasDna = hasFormatOfType(meta.options.formats, "dna");
+
+  if (!hasDna) {
+    return document;
+  }
+
+  if (document.dna !== undefined) {
+    return document;
+  }
+
+  // Find the DNA return in the actions javascript returns.
+  // Built-in scripts wrap output in { dna: ... }.
+  const dnaReturnIndex =
+    document.actions?.javascriptReturns?.findIndex(
+      x =>
+        x.type === "object" &&
+        x.value &&
+        typeof x.value === "object" &&
+        "dna" in (x.value as any),
+    ) ?? -1;
+
+  if (dnaReturnIndex === -1) {
+    return document;
+  }
+
+  const javascriptReturn = document.actions!.javascriptReturns![dnaReturnIndex]
+    .value as any;
+
+  const rawDna =
+    javascriptReturn &&
+    typeof javascriptReturn === "object" &&
+    "dna" in javascriptReturn
+      ? javascriptReturn.dna
+      : javascriptReturn;
+
+  document.actions!.javascriptReturns!.splice(dnaReturnIndex, 1);
+
+  // DNA output is already structured — raw passthrough
+  document.dna = rawDna;
 
   return document;
 }
@@ -310,6 +386,7 @@ function coerceFieldsToFormats(meta: Meta, document: Document): Document {
   const hasScreenshot = hasFormatOfType(meta.options.formats, "screenshot");
   const hasSummary = hasFormatOfType(meta.options.formats, "summary");
   const hasBranding = hasFormatOfType(meta.options.formats, "branding");
+  const hasDna = hasFormatOfType(meta.options.formats, "dna");
 
   if (!hasMarkdown && document.markdown !== undefined) {
     delete document.markdown;
@@ -344,6 +421,10 @@ function coerceFieldsToFormats(meta: Meta, document: Document): Document {
     meta.logger.warn(
       "Request had format: screenshot / screenshot@fullPage, but there was no screenshot field in the result.",
     );
+  }
+
+  if (!hasScreenshot && document.screenshots !== undefined) {
+    delete document.screenshots;
   }
 
   if (!hasLinks && document.links !== undefined) {
@@ -435,6 +516,17 @@ function coerceFieldsToFormats(meta: Meta, document: Document): Document {
     );
   }
 
+  if (!hasDna && document.dna !== undefined) {
+    meta.logger.warn(
+      "Removed dna from Document because it wasn't in formats -- this indicates the engine returned unexpected data.",
+    );
+    delete document.dna;
+  } else if (hasDna && document.dna === undefined) {
+    meta.logger.warn(
+      "Request had format dna, but there was no dna field in the result.",
+    );
+  }
+
   if (!hasChangeTracking && document.changeTracking !== undefined) {
     meta.logger.warn(
       "Removed changeTracking from Document because it wasn't in formats -- this is extremely wasteful and indicates a bug.",
@@ -497,6 +589,7 @@ const transformerStack: Transformer[] = [
   deriveLinksFromHTML,
   deriveImagesFromHTML,
   deriveBrandingFromActions,
+  deriveDnaFromActions,
   deriveMetadataFromRawHTML,
   uploadScreenshot,
   ...(useIndex ? [sendDocumentToIndex] : []),

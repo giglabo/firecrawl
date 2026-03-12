@@ -1,7 +1,7 @@
 FROM node:18-slim
 
 WORKDIR /usr/src/app
-COPY package*.json ./
+COPY package*.json .npmrc ./
 RUN npm install
 
 COPY . .

@@ -234,6 +234,13 @@ if (require.main === module) {
 
   initializeEngineForcing();
 
+  if (!config.NUQ_RABBITMQ_URL) {
+    _logger.info("NUQ_RABBITMQ_URL not configured, extract worker disabled");
+    // Keep process alive so harness doesn't treat it as a crash
+    await new Promise(() => {});
+    return;
+  }
+
   _logger.info("Starting extract worker with RabbitMQ...");
 
   // Start consuming from both the main queue and the DLQ

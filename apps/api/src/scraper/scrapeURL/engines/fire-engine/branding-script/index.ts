@@ -9,6 +9,7 @@ import {
   extractBrandName,
   getBackgroundCandidates,
 } from "./brand-utils";
+export { CONSTANTS } from "./constants";
 
 interface BrandingResult {
   branding: {

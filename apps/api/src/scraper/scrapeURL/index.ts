@@ -148,6 +148,10 @@ function buildFeatureFlags(
     flags.add("branding");
   }
 
+  if (hasFormatOfType(options.formats, "dna")) {
+    flags.add("dna");
+  }
+
   if (options.waitFor !== 0) {
     flags.add("waitFor");
   }
@@ -792,6 +796,7 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
       markdown: engineResult.markdown,
       rawHtml: engineResult.html,
       screenshot: engineResult.screenshot,
+      screenshots: engineResult.screenshots,
       actions: engineResult.actions,
       branding: engineResult.branding,
       metadata: {

@@ -36,6 +36,7 @@ import { AbortManagerThrownError } from "../../lib/abortManager";
 import { youtubePostprocessor } from "../../postprocessors/youtube";
 import { withSpan, setSpanAttributes } from "../../../../lib/otel-tracer";
 import { getBrandingScript } from "./brandingScript";
+import { getDnaScript } from "./dnaScript";
 import { abTestFireEngine } from "../../../../services/ab-test";
 import { scheduleABComparison } from "../../../../services/ab-test-comparison";
 
@@ -263,7 +264,8 @@ export async function scrapeURLWithFireEngineChromeCDP(
       "engine.team_id": meta.internalOptions.teamId,
     });
     const hasBranding = hasFormatOfType(meta.options.formats, "branding");
-    const defaultWait = hasBranding ? BRANDING_DEFAULT_WAIT_MS : 0;
+    const hasDna = hasFormatOfType(meta.options.formats, "dna");
+    const defaultWait = hasBranding || hasDna ? BRANDING_DEFAULT_WAIT_MS : 0;
     const effectiveWait =
       meta.options.waitFor != null && meta.options.waitFor !== 0
         ? meta.options.waitFor
@@ -306,11 +308,31 @@ export async function scrapeURLWithFireEngineChromeCDP(
             },
           ]
         : []),
-      ...(hasFormatOfType(meta.options.formats, "branding")
+      ...(hasBranding
         ? [
             {
               type: "executeJavascript" as const,
-              script: getBrandingScript(),
+              script: getBrandingScript({
+                customScript: hasBranding.customScript,
+                constants: hasBranding.constants,
+              }),
+              metadata: { __firecrawl_internal: true },
+            },
+          ]
+        : []),
+      ...(hasDna
+        ? [
+            // Lazy-load bypass: scroll to bottom and back to trigger deferred content
+            { type: "scroll" as const, direction: "down" as const },
+            { type: "wait" as const, milliseconds: 1000 },
+            { type: "scroll" as const, direction: "up" as const },
+            { type: "wait" as const, milliseconds: 500 },
+            {
+              type: "executeJavascript" as const,
+              script: getDnaScript({
+                customScript: hasDna.customScript,
+                constants: hasDna.constants,
+              }),
               metadata: { __firecrawl_internal: true },
             },
           ]
@@ -324,6 +346,7 @@ export async function scrapeURLWithFireEngineChromeCDP(
 
     const shouldAllowMedia =
       hasFormatOfType(meta.options.formats, "branding") ||
+      hasFormatOfType(meta.options.formats, "dna") ||
       youtubePostprocessor.shouldRun(
         meta,
         new URL(meta.rewrittenUrl ?? meta.url),
@@ -606,7 +629,8 @@ export function fireEngineMaxReasonableTime(
   engine: "chrome-cdp" | "playwright" | "tlsclient",
 ): number {
   const hasBranding = hasFormatOfType(meta.options.formats, "branding");
-  const defaultWait = hasBranding ? BRANDING_DEFAULT_WAIT_MS : 0;
+  const hasDna = hasFormatOfType(meta.options.formats, "dna");
+  const defaultWait = hasBranding || hasDna ? BRANDING_DEFAULT_WAIT_MS : 0;
   const effectiveWait =
     meta.options.waitFor != null && meta.options.waitFor !== 0
       ? meta.options.waitFor
