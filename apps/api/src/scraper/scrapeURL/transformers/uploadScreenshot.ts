@@ -170,17 +170,27 @@ export async function uploadScreenshot(
 
   // Upload screenshots array
   if (document.screenshots?.length) {
-    const uploaded: string[] = [];
-    for (const ss of document.screenshots) {
-      if (!ss.startsWith("data:")) {
-        uploaded.push(ss);
-        continue;
-      }
-      uploaded.push(
-        await uploadSingleScreenshot(meta, ss, ssFormat, ssQuality),
+    if (config.SCREENSHOT_UPLOAD_PARALLEL !== false) {
+      document.screenshots = await Promise.all(
+        document.screenshots.map(ss =>
+          ss.startsWith("data:")
+            ? uploadSingleScreenshot(meta, ss, ssFormat, ssQuality)
+            : Promise.resolve(ss),
+        ),
       );
+    } else {
+      const uploaded: string[] = [];
+      for (const ss of document.screenshots) {
+        if (!ss.startsWith("data:")) {
+          uploaded.push(ss);
+          continue;
+        }
+        uploaded.push(
+          await uploadSingleScreenshot(meta, ss, ssFormat, ssQuality),
+        );
+      }
+      document.screenshots = uploaded;
     }
-    document.screenshots = uploaded;
   }
 
   return document;
