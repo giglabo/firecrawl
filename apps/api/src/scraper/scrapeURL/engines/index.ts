@@ -79,6 +79,7 @@ const featureFlags = [
   "useFastMode",
   "stealthProxy",
   "branding",
+  "dna",
   "disableAdblock",
 ] as const;
 
@@ -102,6 +103,7 @@ const featureFlagOptions: {
   skipTlsVerification: { priority: 10 },
   stealthProxy: { priority: 20 },
   branding: { priority: 20 }, // Requires CDP executeJavascript
+  dna: { priority: 20 }, // Requires CDP executeJavascript
   disableAdblock: { priority: 10 },
 } as const;
 
@@ -114,6 +116,7 @@ export type EngineScrapeResult = {
   error?: string;
 
   screenshot?: string;
+  screenshots?: string[];
   actions?: {
     screenshots: string[];
     scrapes: ScrapeActionContent[];
@@ -212,6 +215,7 @@ const engineOptions: {
       useFastMode: true,
       stealthProxy: false,
       branding: false,
+      dna: false,
       disableAdblock: true,
     },
     quality: 1000, // index should always be tried first
@@ -231,6 +235,7 @@ const engineOptions: {
       useFastMode: false,
       stealthProxy: false,
       branding: true,
+      dna: true,
       disableAdblock: false,
     },
     quality: 50,
@@ -250,6 +255,7 @@ const engineOptions: {
       useFastMode: false,
       stealthProxy: false,
       branding: true,
+      dna: true,
       disableAdblock: false,
     },
     quality: 45,
@@ -269,6 +275,7 @@ const engineOptions: {
       useFastMode: true,
       stealthProxy: false,
       branding: false,
+      dna: false,
       disableAdblock: false,
     },
     quality: -1,
@@ -288,6 +295,7 @@ const engineOptions: {
       useFastMode: false,
       stealthProxy: true,
       branding: true,
+      dna: true,
       disableAdblock: false,
     },
     quality: -2,
@@ -307,6 +315,7 @@ const engineOptions: {
       useFastMode: false,
       stealthProxy: true,
       branding: true,
+      dna: true,
       disableAdblock: false,
     },
     quality: -5,
@@ -326,6 +335,7 @@ const engineOptions: {
       useFastMode: false,
       stealthProxy: false,
       branding: false,
+      dna: false,
       disableAdblock: true,
     },
     quality: 40,
@@ -345,6 +355,7 @@ const engineOptions: {
       useFastMode: false,
       stealthProxy: true,
       branding: false,
+      dna: false,
       disableAdblock: true,
     },
     quality: -10,
@@ -353,8 +364,8 @@ const engineOptions: {
     features: {
       actions: false,
       waitFor: true,
-      screenshot: false,
-      "screenshot@fullScreen": false,
+      screenshot: true,
+      "screenshot@fullScreen": true,
       pdf: false,
       document: false,
       atsv: false,
@@ -363,7 +374,8 @@ const engineOptions: {
       skipTlsVerification: true,
       useFastMode: false,
       stealthProxy: false,
-      branding: false,
+      branding: true,
+      dna: true,
       disableAdblock: false,
     },
     quality: 20,
@@ -383,6 +395,7 @@ const engineOptions: {
       useFastMode: true,
       stealthProxy: false,
       branding: false,
+      dna: false,
       disableAdblock: false,
     },
     quality: 10,
@@ -402,6 +415,7 @@ const engineOptions: {
       useFastMode: true,
       stealthProxy: true,
       branding: false,
+      dna: false,
       disableAdblock: false,
     },
     quality: -15,
@@ -421,6 +435,7 @@ const engineOptions: {
       useFastMode: true,
       stealthProxy: false,
       branding: false,
+      dna: false,
       disableAdblock: false,
     },
     quality: 5,
@@ -440,6 +455,7 @@ const engineOptions: {
       useFastMode: true,
       stealthProxy: true, // kinda...
       branding: false,
+      dna: false,
       disableAdblock: true,
     },
     quality: -20,
@@ -459,6 +475,7 @@ const engineOptions: {
       useFastMode: true,
       stealthProxy: true, // kinda...
       branding: false,
+      dna: false,
       disableAdblock: true,
     },
     quality: -20,
@@ -477,6 +494,7 @@ export function shouldUseIndex(meta: Meta) {
     config.FIRECRAWL_INDEX_WRITE_ONLY !== true &&
     !hasFormatOfType(meta.options.formats, "changeTracking") &&
     !hasFormatOfType(meta.options.formats, "branding") &&
+    !hasFormatOfType(meta.options.formats, "dna") &&
     // Skip index if a non-default PDF maxPages is specified
     getPDFMaxPages(meta.options.parsers) === undefined &&
     !hasCustomScreenshotSettings &&

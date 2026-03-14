@@ -81,6 +81,18 @@ const configSchema = z.object({
   GCS_INDEX_BUCKET_NAME: z.string().optional(),
   GCS_MEDIA_BUCKET_NAME: z.string().optional(),
 
+  // Screenshot Storage (S3/MinIO or Local filesystem)
+  SCREENSHOT_STORAGE_PROVIDER: z.enum(["s3", "local"]).optional(),
+  SCREENSHOT_STORAGE_S3_ENDPOINT: z.string().optional(),
+  SCREENSHOT_STORAGE_S3_REGION: z.string().optional(),
+  SCREENSHOT_STORAGE_S3_BUCKET: z.string().optional(),
+  SCREENSHOT_STORAGE_S3_ACCESS_KEY_ID: z.string().optional(),
+  SCREENSHOT_STORAGE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+  SCREENSHOT_STORAGE_S3_FORCE_PATH_STYLE: z.stringbool().optional(),
+  SCREENSHOT_STORAGE_S3_PUBLIC_URL: z.string().optional(),
+  SCREENSHOT_STORAGE_LOCAL_DIR: z.string().optional(),
+  SCREENSHOT_STORAGE_LOCAL_PUBLIC_URL: z.string().optional(),
+
   // Fire Engine
   FIRE_ENGINE_BETA_URL: z.string().optional(),
   FIRE_ENGINE_STAGING_URL: z.string().optional(),
@@ -175,6 +187,12 @@ const configSchema = z.object({
   DISABLE_BLOCKLIST: z.stringbool().optional(),
   FORCED_ENGINE_DOMAINS: z.string().optional(),
   DEBUG_BRANDING: z.stringbool().optional(),
+  BRANDING_SKIP_LLM: z.stringbool().optional(),
+  BRANDING_CUSTOM_SCRIPT_PATH: z.string().optional(),
+  BRANDING_CONSTANTS_OVERRIDE: z.string().optional(),
+  BRANDING_SKIP_PROCESSOR: z.stringbool().optional(),
+  DNA_CUSTOM_SCRIPT_PATH: z.string().optional(),
+  DNA_CONSTANTS_OVERRIDE: z.string().optional(),
 
   // AI/ML
   MODEL_NAME: z.string().optional(),

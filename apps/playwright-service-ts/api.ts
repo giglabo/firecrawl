@@ -1,8 +1,9 @@
 import express, { Request, Response } from 'express';
-import { chromium, Browser, BrowserContext, Route, Request as PlaywrightRequest, Page } from 'playwright';
+import { chromium, Browser, BrowserContext, Route, Request as PlaywrightRequest, Page, devices } from 'playwright';
 import dotenv from 'dotenv';
 import UserAgent from 'user-agents';
 import { getError } from './helpers/get_error';
+import { getCookieDismissScript } from './helpers/dismiss_cookie_banners';
 
 dotenv.config();
 
@@ -12,6 +13,8 @@ const port = process.env.PORT || 3003;
 app.use(express.json());
 
 const BLOCK_MEDIA = (process.env.BLOCK_MEDIA || 'False').toUpperCase() === 'TRUE';
+const DISMISS_COOKIE_BANNERS = (process.env.DISMISS_COOKIE_BANNERS ?? 'TRUE').toUpperCase() === 'TRUE';
+const COOKIE_DISMISS_SCRIPT = getCookieDismissScript();
 const MAX_CONCURRENT_PAGES = Math.max(1, Number.parseInt(process.env.MAX_CONCURRENT_PAGES ?? '10', 10) || 10);
 
 const PROXY_SERVER = process.env.PROXY_SERVER || null;
@@ -80,6 +83,16 @@ interface UrlModel {
   headers?: { [key: string]: string };
   check_selector?: string;
   skip_tls_verification?: boolean;
+  execute_javascript?: string;
+  screenshot?: boolean;
+  screenshot_full_page?: boolean;
+  screenshot_quality?: number;
+  screenshot_viewport?: { width: number; height: number };
+  screenshot_scroll_capture?: boolean;
+  screenshot_scroll_wait?: number;
+  screenshot_max_scrolls?: number;
+  screenshot_device?: string;
+  dismiss_cookie_banners?: boolean;
 }
 
 let browser: Browser;
@@ -99,14 +112,25 @@ const initializeBrowser = async () => {
   });
 };
 
-const createContext = async (skipTlsVerification: boolean = false) => {
-  const userAgent = new UserAgent().toString();
-  const viewport = { width: 1280, height: 800 };
+const createContext = async (
+  skipTlsVerification: boolean = false,
+  blockMedia: boolean = BLOCK_MEDIA,
+  deviceName?: string,
+) => {
+  const deviceDescriptor = deviceName ? devices[deviceName] : undefined;
+  const userAgent = deviceDescriptor?.userAgent ?? new UserAgent().toString();
+  const viewport = deviceDescriptor?.viewport ?? { width: 1280, height: 800 };
 
   const contextOptions: any = {
     userAgent,
     viewport,
     ignoreHTTPSErrors: skipTlsVerification,
+    ...(deviceDescriptor ? {
+      screen: (deviceDescriptor as any).screen,
+      deviceScaleFactor: deviceDescriptor.deviceScaleFactor,
+      isMobile: deviceDescriptor.isMobile,
+      hasTouch: deviceDescriptor.hasTouch,
+    } : {}),
   };
 
   if (PROXY_SERVER && PROXY_USERNAME && PROXY_PASSWORD) {
@@ -123,7 +147,7 @@ const createContext = async (skipTlsVerification: boolean = false) => {
 
   const newContext = await browser.newContext(contextOptions);
 
-  if (BLOCK_MEDIA) {
+  if (blockMedia) {
     await newContext.route('**/*.{png,jpg,jpeg,gif,svg,mp3,mp4,avi,flac,ogg,wav,webm}', async (route: Route, request: PlaywrightRequest) => {
       await route.abort();
     });
@@ -218,8 +242,101 @@ app.get('/health', async (req: Request, res: Response) => {
   }
 });
 
+async function captureScrollScreenshots(page: Page, options: {
+  quality?: number;
+  scrollWait: number;
+  maxScrolls: number;
+}): Promise<string[]> {
+  // Force-enable scrolling: remove overflow:hidden and nuke fixed overlays
+  await page.evaluate(() => {
+    // Use setProperty with !important directly on elements — wins over <style> tags
+    document.documentElement.style.setProperty('overflow', 'auto', 'important');
+    document.documentElement.style.setProperty('height', 'auto', 'important');
+    document.documentElement.style.setProperty('position', 'static', 'important');
+    document.body.style.setProperty('overflow', 'auto', 'important');
+    document.body.style.setProperty('height', 'auto', 'important');
+    document.body.style.setProperty('position', 'static', 'important');
+
+    // Remove fixed/sticky overlays that block content (cookie banners, modals)
+    document.querySelectorAll('*').forEach(el => {
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'html' || tag === 'body') return;
+      const cs = window.getComputedStyle(el);
+      if (cs.position === 'fixed' || cs.position === 'sticky') {
+        const rect = (el as HTMLElement).getBoundingClientRect();
+        // Only remove large overlays (covering >40% of viewport)
+        if (rect.width > window.innerWidth * 0.4 && rect.height > window.innerHeight * 0.4) {
+          (el as HTMLElement).remove();
+        }
+      }
+    });
+  });
+  await page.waitForTimeout(200);
+
+  const viewportHeight = page.viewportSize()!.height;
+  const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
+  const totalPositions = Math.min(
+    Math.ceil(scrollHeight / viewportHeight),
+    options.maxScrolls
+  );
+
+  const screenshots: string[] = [];
+  for (let i = 0; i < totalPositions; i++) {
+    await page.evaluate((y) => window.scrollTo(0, y), i * viewportHeight);
+    await page.waitForTimeout(options.scrollWait);
+
+    // Verify the scroll actually moved
+    const actualY = await page.evaluate(() => window.scrollY);
+    if (i > 0 && actualY === 0) {
+      console.log(`Scroll stuck at position 0 after ${i} attempts, stopping`);
+      break;
+    }
+
+    const screenshotOptions: any = { type: 'png' as const, fullPage: false };
+    if (options.quality !== undefined) {
+      screenshotOptions.type = 'jpeg';
+      screenshotOptions.quality = options.quality;
+    }
+    const buffer = await page.screenshot(screenshotOptions);
+    const mime = screenshotOptions.type === 'jpeg' ? 'image/jpeg' : 'image/png';
+    screenshots.push(`data:${mime};base64,${buffer.toString('base64')}`);
+  }
+
+  // Scroll back to top
+  await page.evaluate(() => window.scrollTo(0, 0));
+  return screenshots;
+}
+
+app.get('/devices', (_req: Request, res: Response) => {
+  const deviceList = Object.entries(devices).map(([name, desc]) => ({
+    name,
+    viewport: desc.viewport,
+    isMobile: desc.isMobile,
+    hasTouch: desc.hasTouch,
+    deviceScaleFactor: desc.deviceScaleFactor,
+  }));
+  res.json(deviceList);
+});
+
 app.post('/scrape', async (req: Request, res: Response) => {
-  const { url, wait_after_load = 0, timeout = 15000, headers, check_selector, skip_tls_verification = false }: UrlModel = req.body;
+  const {
+    url,
+    wait_after_load = 0,
+    timeout = 15000,
+    headers,
+    check_selector,
+    skip_tls_verification = false,
+    execute_javascript,
+    screenshot: screenshot_requested,
+    screenshot_full_page,
+    screenshot_quality,
+    screenshot_viewport,
+    screenshot_scroll_capture,
+    screenshot_scroll_wait,
+    screenshot_max_scrolls,
+    screenshot_device,
+    dismiss_cookie_banners = true,
+  }: UrlModel = req.body;
 
   console.log(`================= Scrape Request =================`);
   console.log(`URL: ${url}`);
@@ -242,17 +359,24 @@ app.post('/scrape', async (req: Request, res: Response) => {
     console.warn('⚠️ WARNING: No proxy server provided. Your IP address may be blocked.');
   }
 
+  if (screenshot_device && !devices[screenshot_device]) {
+    return res.status(400).json({
+      error: `Unknown device "${screenshot_device}". Use Playwright device names like "iPhone 14", "iPad Pro 11", "Galaxy S9+", etc.`,
+    });
+  }
+
   if (!browser) {
     await initializeBrowser();
   }
 
   await pageSemaphore.acquire();
-  
+
   let requestContext: BrowserContext | null = null;
   let page: Page | null = null;
 
   try {
-    requestContext = await createContext(skip_tls_verification);
+    const shouldBlockMedia = execute_javascript ? false : BLOCK_MEDIA;
+    requestContext = await createContext(skip_tls_verification, shouldBlockMedia, screenshot_device);
     page = await requestContext.newPage();
 
     if (headers) {
@@ -268,11 +392,78 @@ app.post('/scrape', async (req: Request, res: Response) => {
       console.log(`🚨 Scrape failed with status code: ${result.status} ${pageError}`);
     }
 
+    // Cookie banner dismissal
+    const shouldDismissCookies = dismiss_cookie_banners && DISMISS_COOKIE_BANNERS;
+    if (shouldDismissCookies) {
+      try {
+        const dismissResult = await page.evaluate(COOKIE_DISMISS_SCRIPT) as { dismissed: boolean; method: string } | null;
+        if (dismissResult?.dismissed) {
+          console.log(`Cookie banner dismissed via: ${dismissResult.method}`);
+        }
+        await page.waitForTimeout(500);
+      } catch (error) {
+        console.error('Cookie dismissal error (non-fatal):', error);
+      }
+    }
+
+    // JavaScript execution
+    let javascriptReturn: string | undefined;
+    if (execute_javascript) {
+      try {
+        const jsResult = await page.evaluate(execute_javascript);
+        javascriptReturn = JSON.stringify({ type: typeof jsResult, value: jsResult });
+      } catch (error) {
+        console.error('JavaScript execution error:', error);
+      }
+    }
+
+    // Screenshot capture
+    let screenshotData: string | undefined;
+    let screenshotsData: string[] | undefined;
+
+    if (screenshot_scroll_capture && (screenshot_requested || screenshot_full_page)) {
+      try {
+        if (screenshot_viewport) {
+          await page.setViewportSize(screenshot_viewport);
+        }
+        screenshotsData = await captureScrollScreenshots(page, {
+          quality: screenshot_quality,
+          scrollWait: screenshot_scroll_wait ?? 300,
+          maxScrolls: screenshot_max_scrolls ?? 20,
+        });
+        screenshotData = screenshotsData[0]; // backward compat
+      } catch (error) {
+        console.error('Scroll screenshot error:', error);
+      }
+    } else if (screenshot_requested || screenshot_full_page) {
+      try {
+        if (screenshot_viewport) {
+          await page.setViewportSize(screenshot_viewport);
+        }
+        const screenshotOptions: any = {
+          type: 'png' as const,
+          fullPage: !!screenshot_full_page,
+        };
+        if (screenshot_quality !== undefined) {
+          screenshotOptions.type = 'jpeg';
+          screenshotOptions.quality = screenshot_quality;
+        }
+        const buffer = await page.screenshot(screenshotOptions);
+        const mimeType = screenshotOptions.type === 'jpeg' ? 'image/jpeg' : 'image/png';
+        screenshotData = `data:${mimeType};base64,${buffer.toString('base64')}`;
+      } catch (error) {
+        console.error('Screenshot error:', error);
+      }
+    }
+
     res.json({
       content: result.content,
       pageStatusCode: result.status,
       contentType: result.contentType,
-      ...(pageError && { pageError })
+      ...(pageError && { pageError }),
+      ...(javascriptReturn !== undefined && { javascriptReturn }),
+      ...(screenshotData !== undefined && { screenshot: screenshotData }),
+      ...(screenshotsData !== undefined && { screenshots: screenshotsData }),
     });
 
   } catch (error) {

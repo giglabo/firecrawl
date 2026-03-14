@@ -1,1 +1,14 @@
+# Scan staged changes for secrets using gitleaks
+if command -v gitleaks &>/dev/null; then
+  echo "Running gitleaks on staged changes..."
+  gitleaks git --staged --verbose --config .gitleaks.toml
+  echo "No secrets detected."
+else
+  echo "WARNING: gitleaks is not installed — skipping secret scan."
+  echo "Install it to enable pre-commit secret detection:"
+  echo "  brew install gitleaks          # macOS"
+  echo "  scoop install gitleaks         # Windows"
+  echo "  https://github.com/gitleaks/gitleaks#installing"
+fi
+
 cd apps/api && pnpm knip --cache && pnpm lint-staged

@@ -1,0 +1,29 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "Firecrawl gitleaks config"
+
+[extend]
+# Use the default gitleaks rules as a base
+useDefault = true
+
+# Allow known example/test placeholder values
+[allowlist]
+  description = "Allow placeholder and test values"
+
+  paths = [
+    '''node_modules/''',
+    '''pnpm-lock\.yaml''',
+    '''apps/api/pnpm-lock\.yaml''',
+  ]
+
+  regexTarget = "match"
+  regexes = [
+    # Placeholder API keys used in examples and SDK docs
+    '''fc-YOUR_API_KEY''',
+    '''<your api key>''',
+    # Example DB/Redis URLs with dev credentials
+    '''redis://redis:6379''',
+    '''redis://localhost:6379''',
+    '''postgres://postgres:postgres@''',
+  ]

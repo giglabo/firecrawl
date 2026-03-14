@@ -1,0 +1,102 @@
+# docker-compose.selfhost.yaml
+# Self-hosted Firecrawl with MinIO storage + branding (no Supabase, no RabbitMQ)
+#
+# Usage:
+#   ./selfhost.sh minio up --build -d
+#
+# Host ports (high range to avoid conflicts):
+#   API:           13002
+#   Playwright:    13000
+#   PostgreSQL:    15432
+#   Redis:         16379
+#   MinIO API:     19000
+#   MinIO Console: 19001
+
+services:
+  # No-op stub — base api depends_on rabbitmq (inherited, can't remove)
+  rabbitmq:
+    image: busybox:latest
+    command: ["sleep", "infinity"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+        compress: "true"
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing local/firecrawl-screenshots;
+      mc anonymous set download local/firecrawl-screenshots;
+      echo 'Bucket firecrawl-screenshots ready';
+      "
+    networks:
+      - backend
+
+  api:
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      NUQ_RABBITMQ_URL: ""
+      POSTGRES_HOST: nuq-postgres
+      SCREENSHOT_STORAGE_PROVIDER: s3
+      SCREENSHOT_STORAGE_S3_ENDPOINT: http://minio:9000
+      SCREENSHOT_STORAGE_S3_REGION: us-east-1
+      SCREENSHOT_STORAGE_S3_BUCKET: firecrawl-screenshots
+      SCREENSHOT_STORAGE_S3_ACCESS_KEY_ID: minioadmin
+      SCREENSHOT_STORAGE_S3_SECRET_ACCESS_KEY: minioadmin
+      SCREENSHOT_STORAGE_S3_FORCE_PATH_STYLE: "true"
+      SCREENSHOT_STORAGE_S3_PUBLIC_URL: http://localhost:19000/firecrawl-screenshots
+      BRANDING_SKIP_LLM: "true"
+      DEBUG_BRANDING: "true"
+      USE_DB_AUTHENTICATION: "false"
+      TEST_SUITE_SELF_HOSTED: "true"
+
+  playwright-service:
+    ports:
+      - "13000:3000"
+    environment:
+      BLOCK_MEDIA: "false"
+
+  redis:
+    ports:
+      - "16379:6379"
+
+  nuq-postgres:
+    ports:
+      - "15432:5432"
+
+volumes:
+  minio-data:

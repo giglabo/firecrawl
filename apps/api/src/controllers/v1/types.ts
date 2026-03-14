@@ -980,6 +980,7 @@ export type Document = {
   links?: string[];
   images?: string[];
   screenshot?: string;
+  screenshots?: string[];
   extract?: any;
   json?: any;
   summary?: string;

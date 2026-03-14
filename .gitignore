@@ -1,3 +1,4 @@
+tmp/
 .DS_Store
 /node_modules/
 /dist/
@@ -5,6 +6,7 @@
 *.csv
 dump.rdb
 /mongo-data
+/data/
 apps/js-sdk/node_modules/
 
 apps/api/.env.local
@@ -58,3 +60,13 @@ target/
 
 # local files
 _local/
+
+# IDE
+.idea/
+
+# Custom documentation (local only)
+custom-docs/
+
+# Self-hosted env and data
+.env.selfhost
+data/screenshots/

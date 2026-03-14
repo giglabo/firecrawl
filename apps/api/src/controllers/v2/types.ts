@@ -371,6 +371,7 @@ type ChangeTrackingFormatWithOptions = z.output<
 const screenshotFormatWithOptions = z.object({
   type: z.literal("screenshot"),
   fullPage: z.boolean().prefault(false),
+  format: z.enum(["png", "jpeg", "webp"]).optional(),
   quality: z.number().min(1).max(100).optional(),
   viewport: z
     .object({
@@ -378,6 +379,11 @@ const screenshotFormatWithOptions = z.object({
       height: z.int().positive().finite().max(4320), // 8K resolution height
     })
     .optional(),
+  scrollCapture: z.boolean().prefault(false),
+  maxScrollScreenshots: z.number().int().min(1).max(50).optional(),
+  scrollWaitMs: z.number().int().min(0).max(5000).optional(),
+  device: z.string().optional(),
+  select: z.string().optional(),
 });
 
 type ScreenshotFormatWithOptions = z.output<typeof screenshotFormatWithOptions>;
@@ -400,6 +406,24 @@ const attributesFormatWithOptions = z.strictObject({
 
 type AttributesFormatWithOptions = z.output<typeof attributesFormatWithOptions>;
 
+const brandingFormatWithOptions = z.object({
+  type: z.literal("branding"),
+  customScript: z.string().max(500_000).optional(),
+  skipProcessor: z.boolean().optional(),
+  constants: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
+});
+
+type BrandingFormatWithOptions = z.output<typeof brandingFormatWithOptions>;
+
+const dnaFormatWithOptions = z.object({
+  type: z.literal("dna"),
+  customScript: z.string().max(500_000).optional(),
+  skipProcessor: z.boolean().optional(),
+  constants: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
+});
+
+type DnaFormatWithOptions = z.output<typeof dnaFormatWithOptions>;
+
 export type FormatObject =
   | { type: "markdown" }
   | { type: "html" }
@@ -411,7 +435,8 @@ export type FormatObject =
   | ChangeTrackingFormatWithOptions
   | ScreenshotFormatWithOptions
   | AttributesFormatWithOptions
-  | { type: "branding" };
+  | BrandingFormatWithOptions
+  | DnaFormatWithOptions;
 
 const pdfModeSchema = z.enum(["fast", "auto", "ocr"]);
 
@@ -518,7 +543,8 @@ const baseScrapeOptions = z.strictObject({
           changeTrackingFormatWithOptions,
           screenshotFormatWithOptions,
           attributesFormatWithOptions,
-          z.strictObject({ type: z.literal("branding") }),
+          brandingFormatWithOptions,
+          dnaFormatWithOptions,
         ])
         .array()
         .optional()
@@ -567,6 +593,28 @@ const baseScrapeOptions = z.strictObject({
   __experimental_omce: z.boolean().prefault(false).optional(),
   __experimental_omceDomain: z.string().optional(),
   __experimental_engpicker: z.boolean().prefault(false).optional(),
+  storage: z
+    .strictObject({
+      provider: z.enum(["s3", "local"]),
+      s3: z
+        .strictObject({
+          endpoint: z.string().optional(),
+          region: z.string().optional(),
+          bucket: z.string(),
+          accessKeyId: z.string(),
+          secretAccessKey: z.string(),
+          forcePathStyle: z.boolean().optional(),
+          publicUrl: z.string().optional(),
+        })
+        .optional(),
+      local: z
+        .strictObject({
+          directory: z.string(),
+          publicUrl: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 type ScrapeOptionsBase = z.infer<typeof baseScrapeOptions>;
@@ -651,6 +699,19 @@ export const scrapeOptions = strictWithMessage(baseScrapeOptions)
     },
   )
   .refine(waitForRefine, waitForRefineOpts)
+  .refine(
+    obj => {
+      if (!obj.storage) return true;
+      if (obj.storage.provider === "s3" && !obj.storage.s3) return false;
+      if (obj.storage.provider === "local" && !obj.storage.local) return false;
+      return true;
+    },
+    {
+      message:
+        "storage configuration object is required for the selected provider (s3 or local)",
+      path: ["storage"],
+    },
+  )
   .transform(extractTransformRequired);
 
 export type BaseScrapeOptions = z.infer<typeof baseScrapeOptions>;
@@ -988,10 +1049,12 @@ export type Document = {
   links?: string[];
   images?: string[];
   screenshot?: string;
+  screenshots?: string[];
   extract?: any;
   json?: any;
   summary?: string;
   branding?: BrandingProfile;
+  dna?: any;
   warning?: string;
   attributes?: {
     selector: string;
