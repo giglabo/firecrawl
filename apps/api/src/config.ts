@@ -90,6 +90,7 @@ const configSchema = z.object({
   SCREENSHOT_STORAGE_S3_SECRET_ACCESS_KEY: z.string().optional(),
   SCREENSHOT_STORAGE_S3_FORCE_PATH_STYLE: z.stringbool().optional(),
   SCREENSHOT_STORAGE_S3_PUBLIC_URL: z.string().optional(),
+  SCREENSHOT_STORAGE_S3_PREFIX: z.string().optional(),
   SCREENSHOT_STORAGE_LOCAL_DIR: z.string().optional(),
   SCREENSHOT_STORAGE_LOCAL_PUBLIC_URL: z.string().optional(),
 
