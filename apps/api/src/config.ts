@@ -91,7 +91,12 @@ const configSchema = z.object({
   SCREENSHOT_STORAGE_S3_FORCE_PATH_STYLE: z.stringbool().optional(),
   SCREENSHOT_STORAGE_S3_PUBLIC_URL: z.string().optional(),
   SCREENSHOT_STORAGE_S3_PREFIX: z.string().optional(),
-  SCREENSHOT_UPLOAD_PARALLEL: z.stringbool().prefault(true).optional(),
+  SCREENSHOT_UPLOAD_CONCURRENCY: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .prefault(6)
+    .optional(),
   SCREENSHOT_STORAGE_LOCAL_DIR: z.string().optional(),
   SCREENSHOT_STORAGE_LOCAL_PUBLIC_URL: z.string().optional(),
 
