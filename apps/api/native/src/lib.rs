@@ -3,6 +3,7 @@
 pub use crate::crawler::*;
 pub use crate::engpicker::*;
 pub use crate::html::*;
+pub use crate::image_converter::*;
 pub use crate::pdf::*;
 pub use crate::utils::*;
 
@@ -12,6 +13,7 @@ mod crawler;
 mod document;
 mod engpicker;
 mod html;
+mod image_converter;
 mod pdf;
 mod utils;
 

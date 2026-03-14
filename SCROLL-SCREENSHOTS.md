@@ -50,12 +50,14 @@ curl -X POST http://localhost:3002/v2/scrape \
 |------------------------|---------|---------|----------------------------------------------------|
 | `type`                 | string  | —       | Must be `"screenshot"`                             |
 | `fullPage`             | boolean | `false` | Capture full page as single image (non-scroll)     |
-| `quality`              | number  | —       | JPEG quality 1–100. Omit for PNG.                  |
+| `format`               | string  | `"png"` | Output format: `"png"`, `"jpeg"`, or `"webp"`     |
+| `quality`              | number  | —       | Quality 1–100 for JPEG/WebP. Omit for PNG.         |
 | `viewport`             | object  | —       | Custom `{ width, height }` (max 7680x4320)         |
 | `scrollCapture`        | boolean | `false` | Enable scroll-based multi-screenshot capture       |
 | `maxScrollScreenshots` | number  | `20`    | Max screenshots to capture (1–50)                  |
 | `scrollWaitMs`         | number  | `300`   | Milliseconds to wait between scroll positions      |
 | `device`               | string  | —       | Playwright device preset name for emulation        |
+| `select`               | string  | —       | Select which screenshots to return (see below)     |
 
 ### Device Emulation
 
@@ -107,6 +109,79 @@ Full list available at `GET /devices` on the Playwright service (returns all Pla
 When `device` is set, the browser context uses the device's user-agent, viewport, device scale factor, and touch/mobile flags. This means the page will render its responsive layout as it would on that device.
 
 > **Note:** `device` overrides `viewport` if both are specified — the device preset's viewport takes precedence during page load. If you also set `viewport`, it will be applied after load specifically for the screenshot.
+
+### Screenshot Format (PNG / JPEG / WebP)
+
+By default screenshots are captured as PNG. Use `format` to choose a different output format:
+
+```bash
+# WebP output (lossy, converted from PNG via native Rust module)
+curl -X POST http://localhost:3002/v2/scrape \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $FIRECRAWL_API_KEY" \
+  -d '{
+    "url": "https://example.com",
+    "formats": [{
+      "type": "screenshot",
+      "format": "webp",
+      "quality": 85
+    }]
+  }'
+
+# JPEG output (native Playwright support)
+curl -X POST http://localhost:3002/v2/scrape \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $FIRECRAWL_API_KEY" \
+  -d '{
+    "url": "https://example.com",
+    "formats": [{
+      "type": "screenshot",
+      "format": "jpeg",
+      "quality": 90
+    }]
+  }'
+```
+
+| Format   | How it works                                          | Quality default |
+|----------|-------------------------------------------------------|-----------------|
+| `png`    | Lossless, captured natively by Playwright             | N/A             |
+| `jpeg`   | Lossy, captured natively by Playwright (`type: jpeg`) | 90              |
+| `webp`   | Lossy, PNG captured then converted via Rust (`webp` crate) | 90        |
+
+### Screenshot Selection (`select`)
+
+When using `scrollCapture`, use the `select` option to return only specific screenshots from the array:
+
+```bash
+# Get only first and last scroll screenshots
+curl -X POST http://localhost:3002/v2/scrape \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $FIRECRAWL_API_KEY" \
+  -d '{
+    "url": "https://www.theguardian.com",
+    "formats": [{
+      "type": "screenshot",
+      "scrollCapture": true,
+      "maxScrollScreenshots": 10,
+      "select": "first,last"
+    }]
+  }'
+```
+
+**Syntax** (1-based indices, case-insensitive):
+
+| Value          | Result                         |
+|----------------|--------------------------------|
+| `"all"`        | All screenshots (default)      |
+| `"1"`          | First only                     |
+| `"first"`      | Alias for `1`                  |
+| `"last"`       | Last only                      |
+| `"first,last"` | First and last                 |
+| `"1,3,5"`      | Specific indices               |
+| `"2-5"`        | Range (inclusive)               |
+| `"1,2-5,last"` | Combination                    |
+
+Out-of-range indices are silently ignored.
 
 ### Via the Playwright Service Directly
 
@@ -175,10 +250,12 @@ See [SCREENSHOT-STORAGE.md](./SCREENSHOT-STORAGE.md) for full details on configu
 | File | Change |
 |------|--------|
 | `apps/playwright-service-ts/api.ts` | Scroll helper, device emulation, `/devices` endpoint |
-| `apps/api/src/controllers/v2/types.ts` | `scrollCapture`, `maxScrollScreenshots`, `scrollWaitMs`, `device` on screenshot format; `screenshots` on Document |
+| `apps/api/src/controllers/v2/types.ts` | `scrollCapture`, `maxScrollScreenshots`, `scrollWaitMs`, `device`, `format`, `select` on screenshot format; `screenshots` on Document |
 | `apps/api/src/controllers/v1/types.ts` | `screenshots` on Document |
 | `apps/api/src/scraper/scrapeURL/engines/index.ts` | `screenshots` on EngineScrapeResult |
-| `apps/api/src/scraper/scrapeURL/engines/playwright/index.ts` | Wire scroll + device params, parse response |
-| `apps/api/src/scraper/scrapeURL/transformers/uploadScreenshot.ts` | Upload screenshots array |
+| `apps/api/src/scraper/scrapeURL/engines/playwright/index.ts` | Wire scroll + device params, JPEG format pass-through, parse response |
+| `apps/api/src/scraper/scrapeURL/transformers/uploadScreenshot.ts` | Upload screenshots array, WebP conversion, screenshot selection |
 | `apps/api/src/scraper/scrapeURL/transformers/index.ts` | Coerce screenshots field |
 | `apps/api/src/scraper/scrapeURL/index.ts` | Pass screenshots to document |
+| `apps/api/native/src/image_converter.rs` | Rust WebP converter via `webp` crate |
+| `apps/api/native/src/lib.rs` | Register image_converter module |

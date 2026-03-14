@@ -68,9 +68,14 @@ export async function scrapeURLWithPlaywright(
         ? {
             screenshot: true,
             screenshot_full_page: hasScreenshot.fullPage || false,
-            ...(hasScreenshot.quality !== undefined
-              ? { screenshot_quality: hasScreenshot.quality }
-              : {}),
+            ...(hasScreenshot.format === "jpeg"
+              ? {
+                  screenshot_type: "jpeg",
+                  screenshot_quality: hasScreenshot.quality ?? 90,
+                }
+              : hasScreenshot.quality !== undefined
+                ? { screenshot_quality: hasScreenshot.quality }
+                : {}),
             ...(hasScreenshot.viewport
               ? { screenshot_viewport: hasScreenshot.viewport }
               : {}),

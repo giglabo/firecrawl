@@ -1,4 +1,5 @@
 export const CONSTANTS = {
+  TARGET_SIZE_KB: 0 as number, // 0 = unlimited (dedup only, no trimming). Set to e.g. 50 for size-aware output.
   MAX_ELEMENTS_TO_SCAN: 5000,
   MAX_TYPOGRAPHY_ENTRIES: 50,
   MAX_COLOR_ENTRIES: 100,

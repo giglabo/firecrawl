@@ -100,6 +100,8 @@ Each screenshot is stored with key: `screenshots/{scrapeId}-{uuid}.{ext}`
 
 For scroll-capture arrays: `screenshots/{scrapeId}-{index}-{uuid}.{ext}`
 
+The `{ext}` is determined by the screenshot `format` option: `png` (default), `jpeg`, or `webp`. When `format` is `"webp"`, the raw PNG is converted to WebP via a native Rust module before upload, and the content type is set to `image/webp`.
+
 ## Env Var Reference
 
 | Variable | Type | Required | Description |

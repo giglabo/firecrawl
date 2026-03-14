@@ -371,6 +371,7 @@ type ChangeTrackingFormatWithOptions = z.output<
 const screenshotFormatWithOptions = z.object({
   type: z.literal("screenshot"),
   fullPage: z.boolean().prefault(false),
+  format: z.enum(["png", "jpeg", "webp"]).optional(),
   quality: z.number().min(1).max(100).optional(),
   viewport: z
     .object({
@@ -382,6 +383,7 @@ const screenshotFormatWithOptions = z.object({
   maxScrollScreenshots: z.number().int().min(1).max(50).optional(),
   scrollWaitMs: z.number().int().min(0).max(5000).optional(),
   device: z.string().optional(),
+  select: z.string().optional(),
 });
 
 type ScreenshotFormatWithOptions = z.output<typeof screenshotFormatWithOptions>;
