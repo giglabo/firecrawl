@@ -1050,7 +1050,9 @@ export type Document = {
   links?: string[];
   images?: string[];
   screenshot?: string;
+  screenshotPath?: string;
   screenshots?: string[];
+  screenshotPaths?: string[];
   extract?: any;
   json?: any;
   summary?: string;
