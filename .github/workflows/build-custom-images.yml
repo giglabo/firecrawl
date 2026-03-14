@@ -64,23 +64,25 @@ jobs:
       packages: write
     strategy:
       matrix:
-        include:
-          - platform: linux/amd64
-          - platform: linux/arm64
-        exclude:
-          - platform: ${{ github.event_name == 'pull_request' && 'linux/arm64' || 'none' }}
+        platform: [linux/amd64, linux/arm64]
     steps:
+      - name: Skip arm64 on PRs
+        if: github.event_name == 'pull_request' && matrix.platform == 'linux/arm64'
+        run: echo "SKIP=true" >> $GITHUB_ENV
+
       - uses: actions/checkout@v4
+        if: env.SKIP != 'true'
 
       - name: Set up QEMU
-        if: matrix.platform != 'linux/amd64'
+        if: env.SKIP != 'true' && matrix.platform != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: env.SKIP != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        if: env.SKIP != 'true' && github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -88,14 +90,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Lowercase repo owner
+        if: env.SKIP != 'true'
         run: echo "REPO_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
 
       - name: Extract platform suffix
+        if: env.SKIP != 'true'
         run: |
           platform="${{ matrix.platform }}"
           echo "PLATFORM_SUFFIX=${platform//\//-}" >> $GITHUB_ENV
 
       - name: Build API image
+        if: env.SKIP != 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./apps/api
@@ -153,23 +158,25 @@ jobs:
       packages: write
     strategy:
       matrix:
-        include:
-          - platform: linux/amd64
-          - platform: linux/arm64
-        exclude:
-          - platform: ${{ github.event_name == 'pull_request' && 'linux/arm64' || 'none' }}
+        platform: [linux/amd64, linux/arm64]
     steps:
+      - name: Skip arm64 on PRs
+        if: github.event_name == 'pull_request' && matrix.platform == 'linux/arm64'
+        run: echo "SKIP=true" >> $GITHUB_ENV
+
       - uses: actions/checkout@v4
+        if: env.SKIP != 'true'
 
       - name: Set up QEMU
-        if: matrix.platform != 'linux/amd64'
+        if: env.SKIP != 'true' && matrix.platform != 'linux/amd64'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: env.SKIP != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        if: env.SKIP != 'true' && github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -177,14 +184,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Lowercase repo owner
+        if: env.SKIP != 'true'
         run: echo "REPO_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
 
       - name: Extract platform suffix
+        if: env.SKIP != 'true'
         run: |
           platform="${{ matrix.platform }}"
           echo "PLATFORM_SUFFIX=${platform//\//-}" >> $GITHUB_ENV
 
       - name: Build Playwright image
+        if: env.SKIP != 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./apps/playwright-service-ts
