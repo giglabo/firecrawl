@@ -75,12 +75,17 @@ function parseScreenshotSelect(
   return Array.from(indices).sort((a, b) => a - b);
 }
 
+interface UploadResult {
+  url: string;
+  path?: string;
+}
+
 async function uploadSingleScreenshot(
   meta: Meta,
   dataUri: string,
   format?: "png" | "jpeg" | "webp",
   quality?: number,
-): Promise<string> {
+): Promise<UploadResult> {
   let contentType = dataUri.split(":")[1].split(";")[0];
   const base64Data = dataUri.split(",")[1];
   let buffer = Buffer.from(base64Data, "base64");
@@ -99,16 +104,19 @@ async function uploadSingleScreenshot(
   // Tenant storage path: request-level config takes priority
   const provider = resolveProvider(meta.options.storage);
   if (provider) {
-    const key = `screenshots/${meta.id}-${crypto.randomUUID()}.${ext}`;
+    const rawPrefix =
+      meta.options.storage?.prefix ?? config.SCREENSHOT_STORAGE_S3_PREFIX;
+    const prefix = rawPrefix ? `${rawPrefix.replace(/\/+$/, "")}/` : "";
+    const key = `${prefix}${meta.id}-${crypto.randomUUID()}.${ext}`;
     try {
       meta.logger.debug("Uploading screenshot to storage provider...");
       const result = await provider.upload(buffer, key, contentType);
-      return result.url;
+      return { url: result.url, path: result.path };
     } catch (error) {
       meta.logger.error(
         `Failed to upload screenshot to storage provider: ${error}`,
       );
-      return dataUri;
+      return { url: dataUri };
     }
   }
 
@@ -124,13 +132,15 @@ async function uploadSingleScreenshot(
         contentType,
       });
 
-      return `https://service.firecrawl.dev/storage/v1/object/public/media/${encodeURIComponent(fileName)}`;
+      return {
+        url: `https://service.firecrawl.dev/storage/v1/object/public/media/${encodeURIComponent(fileName)}`,
+      };
     } catch (error) {
       meta.logger.error(`Failed to upload screenshot to Supabase: ${error}`);
     }
   }
 
-  return dataUri;
+  return { url: dataUri };
 }
 
 export async function uploadScreenshot(
@@ -157,27 +167,41 @@ export async function uploadScreenshot(
     document.screenshot !== undefined &&
     document.screenshot.startsWith("data:")
   ) {
-    document.screenshot = await uploadSingleScreenshot(
+    const result = await uploadSingleScreenshot(
       meta,
       document.screenshot,
       ssFormat,
       ssQuality,
     );
+    document.screenshot = result.url;
+    if (result.path) {
+      document.screenshotPath = result.path;
+    }
   }
 
-  // Upload screenshots array
+  // Upload screenshots array in batches
   if (document.screenshots?.length) {
-    const uploaded: string[] = [];
-    for (const ss of document.screenshots) {
-      if (!ss.startsWith("data:")) {
-        uploaded.push(ss);
-        continue;
-      }
-      uploaded.push(
-        await uploadSingleScreenshot(meta, ss, ssFormat, ssQuality),
+    const concurrency = config.SCREENSHOT_UPLOAD_CONCURRENCY ?? 6;
+    const urls: string[] = [];
+    const paths: string[] = [];
+    for (let i = 0; i < document.screenshots.length; i += concurrency) {
+      const batch = document.screenshots.slice(i, i + concurrency);
+      const uploaded = await Promise.all(
+        batch.map(ss =>
+          ss.startsWith("data:")
+            ? uploadSingleScreenshot(meta, ss, ssFormat, ssQuality)
+            : Promise.resolve({ url: ss } as UploadResult),
+        ),
       );
+      for (const r of uploaded) {
+        urls.push(r.url);
+        if (r.path) paths.push(r.path);
+      }
     }
-    document.screenshots = uploaded;
+    document.screenshots = urls;
+    if (paths.length > 0) {
+      document.screenshotPaths = paths;
+    }
   }
 
   return document;

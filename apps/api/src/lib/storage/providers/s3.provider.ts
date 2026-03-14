@@ -57,7 +57,7 @@ export class S3StorageProvider implements StorageProvider {
     );
 
     const url = this.buildUrl(key);
-    return { url, key, provider: "s3" };
+    return { url, key, path: `/${key}`, provider: "s3" };
   }
 
   async delete(key: string): Promise<void> {

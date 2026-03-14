@@ -1,6 +1,7 @@
 export interface StorageUploadResult {
   url: string;
   key: string;
+  path: string;
   provider: string;
 }
 

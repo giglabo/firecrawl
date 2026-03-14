@@ -24,6 +24,8 @@ This is a fork of `mendableai/firecrawl` (upstream). Our remote layout:
 - `origin` — upstream (`firecrawl/firecrawl`)
 - `fork` — our fork (`giglabo/firecrawl`)
 
+**CRITICAL: NEVER create pull requests against `origin` (upstream). All PRs must target `fork` (`giglabo/firecrawl`). Use `gh pr create --repo giglabo/firecrawl` or push to `fork` remote.**
+
 ### Our custom features (must survive merges)
 
 We extend upstream with self-hosted branding, DNA extraction, scroll screenshots, and pluggable storage. All features use **existing upstream API endpoints** (`POST /v1/scrape`, `POST /v2/scrape`) — no new public routes. Changes are additive request/response fields.

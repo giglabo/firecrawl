@@ -596,6 +596,7 @@ const baseScrapeOptions = z.strictObject({
   storage: z
     .strictObject({
       provider: z.enum(["s3", "local"]),
+      prefix: z.string().optional(),
       s3: z
         .strictObject({
           endpoint: z.string().optional(),
@@ -1049,7 +1050,9 @@ export type Document = {
   links?: string[];
   images?: string[];
   screenshot?: string;
+  screenshotPath?: string;
   screenshots?: string[];
+  screenshotPaths?: string[];
   extract?: any;
   json?: any;
   summary?: string;

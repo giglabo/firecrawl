@@ -32,7 +32,7 @@ export class LocalStorageProvider implements StorageProvider {
       ? `${this.publicUrl}/${key}`
       : `file://${filePath}`;
 
-    return { url, key, provider: "local" };
+    return { url, key, path: `/${key}`, provider: "local" };
   }
 
   async delete(key: string): Promise<void> {

@@ -67,6 +67,7 @@ Override storage on a per-request basis by passing `storage` in the scrape optio
   "formats": [{ "type": "screenshot" }],
   "storage": {
     "provider": "s3",
+    "prefix": "my-project/screenshots",
     "s3": {
       "bucket": "my-bucket",
       "accessKeyId": "...",
@@ -96,11 +97,24 @@ Per-request config takes priority over env var config.
 
 ## Storage Key Format
 
-Each screenshot is stored with key: `screenshots/{scrapeId}-{uuid}.{ext}`
+Each screenshot is stored with key: `{prefix}{scrapeId}-{uuid}.{ext}`
 
-For scroll-capture arrays: `screenshots/{scrapeId}-{index}-{uuid}.{ext}`
+The `{prefix}` is determined by (in priority order):
+1. Per-request `storage.prefix` field in the payload
+2. `SCREENSHOT_STORAGE_S3_PREFIX` env var
+3. Empty (bucket root) — default
+
+For example, with `"prefix": "screenshots"` the key becomes `screenshots/{scrapeId}-{uuid}.{ext}`. Without a prefix, files go directly to the bucket root.
 
 The `{ext}` is determined by the screenshot `format` option: `png` (default), `jpeg`, or `webp`. When `format` is `"webp"`, the raw PNG is converted to WebP via a native Rust module before upload, and the content type is set to `image/webp`.
+
+## Upload Concurrency
+
+When uploading multiple screenshots (e.g. scroll capture), uploads are batched for performance. The batch size is controlled by `SCREENSHOT_UPLOAD_CONCURRENCY` (default: `6`). Within each batch, uploads run in parallel; batches run sequentially.
+
+For example, 20 screenshots with concurrency 6 = 4 batches of 6, 6, 6, 2.
+
+Set to `1` for fully sequential uploads.
 
 ## Env Var Reference
 
@@ -114,6 +128,8 @@ The `{ext}` is determined by the screenshot `format` option: `png` (default), `j
 | `SCREENSHOT_STORAGE_S3_SECRET_ACCESS_KEY` | string | For S3 | AWS secret access key |
 | `SCREENSHOT_STORAGE_S3_FORCE_PATH_STYLE` | boolean | No | Use path-style URLs (for MinIO) |
 | `SCREENSHOT_STORAGE_S3_PUBLIC_URL` | string | No | Custom public URL prefix |
+| `SCREENSHOT_STORAGE_S3_PREFIX` | string | No | Key prefix for S3 objects (default: empty = bucket root) |
+| `SCREENSHOT_UPLOAD_CONCURRENCY` | number | No | Parallel uploads per batch (default: `6`, set `1` for sequential) |
 | `SCREENSHOT_STORAGE_LOCAL_DIR` | string | For local | Filesystem directory path |
 | `SCREENSHOT_STORAGE_LOCAL_PUBLIC_URL` | string | No | Public URL base for download links |
 
