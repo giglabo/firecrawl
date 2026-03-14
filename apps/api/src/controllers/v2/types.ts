@@ -596,6 +596,7 @@ const baseScrapeOptions = z.strictObject({
   storage: z
     .strictObject({
       provider: z.enum(["s3", "local"]),
+      prefix: z.string().optional(),
       s3: z
         .strictObject({
           endpoint: z.string().optional(),

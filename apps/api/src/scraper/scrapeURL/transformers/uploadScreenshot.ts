@@ -99,9 +99,9 @@ async function uploadSingleScreenshot(
   // Tenant storage path: request-level config takes priority
   const provider = resolveProvider(meta.options.storage);
   if (provider) {
-    const prefix = config.SCREENSHOT_STORAGE_S3_PREFIX
-      ? `${config.SCREENSHOT_STORAGE_S3_PREFIX.replace(/\/+$/, "")}/`
-      : "";
+    const rawPrefix =
+      meta.options.storage?.prefix ?? config.SCREENSHOT_STORAGE_S3_PREFIX;
+    const prefix = rawPrefix ? `${rawPrefix.replace(/\/+$/, "")}/` : "";
     const key = `${prefix}${meta.id}-${crypto.randomUUID()}.${ext}`;
     try {
       meta.logger.debug("Uploading screenshot to storage provider...");
