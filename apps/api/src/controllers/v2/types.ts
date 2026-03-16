@@ -573,6 +573,7 @@ const baseScrapeOptions = z.strictObject({
   onlyCleanContent: z.boolean().prefault(false),
   timeout: z.int().positive().min(1000).optional(),
   waitFor: z.int().nonnegative().max(60000).prefault(0),
+  waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
   mobile: z.boolean().prefault(false),
   parsers: parsersSchema.optional(),
   actions: actionsSchema.optional(),

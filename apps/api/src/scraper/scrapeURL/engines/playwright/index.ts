@@ -21,6 +21,12 @@ export async function scrapeURLWithPlaywright(
       ? Math.max(meta.options.waitFor ?? 0, BRANDING_DEFAULT_WAIT_MS)
       : (meta.options.waitFor ?? 0);
 
+  // Smart default: use 'load' when visual formats need full resources,
+  // 'domcontentloaded' otherwise (faster, avoids hanging on slow resources)
+  const needsFullLoad = hasScreenshot || hasBranding || hasDna;
+  const waitUntil =
+    meta.options.waitUntil ?? (needsFullLoad ? "load" : "domcontentloaded");
+
   const response = await robustFetch({
     url: config.PLAYWRIGHT_MICROSERVICE_URL!,
     headers: {
@@ -33,6 +39,7 @@ export async function scrapeURLWithPlaywright(
       headers: meta.options.headers,
       skip_tls_verification: meta.options.skipTlsVerification,
       dismiss_cookie_banners: true,
+      wait_until: waitUntil,
       ...(() => {
         const brandingScript = hasBranding
           ? getBrandingScript({

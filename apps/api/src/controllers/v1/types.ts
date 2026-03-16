@@ -456,6 +456,7 @@ const baseScrapeOptions = z.strictObject({
   onlyCleanContent: z.boolean().prefault(false),
   timeout: z.int().positive().min(1000).optional(),
   waitFor: z.int().nonnegative().finite().max(60000).prefault(0),
+  waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
   // Deprecate this to jsonOptions
   extract: extractOptions.optional(),
   // New

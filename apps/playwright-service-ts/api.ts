@@ -93,6 +93,7 @@ interface UrlModel {
   screenshot_max_scrolls?: number;
   screenshot_device?: string;
   dismiss_cookie_banners?: boolean;
+  wait_until?: 'load' | 'domcontentloaded' | 'networkidle';
 }
 
 let browser: Browser;
@@ -183,7 +184,7 @@ const isValidUrl = (urlString: string): boolean => {
   }
 };
 
-const scrapePage = async (page: Page, url: string, waitUntil: 'load' | 'networkidle', waitAfterLoad: number, timeout: number, checkSelector: string | undefined) => {
+const scrapePage = async (page: Page, url: string, waitUntil: 'load' | 'domcontentloaded' | 'networkidle', waitAfterLoad: number, timeout: number, checkSelector: string | undefined) => {
   console.log(`Navigating to ${url} with waitUntil: ${waitUntil} and timeout: ${timeout}ms`);
   const response = await page.goto(url, { waitUntil, timeout });
 
@@ -336,6 +337,7 @@ app.post('/scrape', async (req: Request, res: Response) => {
     screenshot_max_scrolls,
     screenshot_device,
     dismiss_cookie_banners = true,
+    wait_until = 'load',
   }: UrlModel = req.body;
 
   console.log(`================= Scrape Request =================`);
@@ -383,7 +385,7 @@ app.post('/scrape', async (req: Request, res: Response) => {
       await page.setExtraHTTPHeaders(headers);
     }
 
-    const result = await scrapePage(page, url, 'load', wait_after_load, timeout, check_selector);
+    const result = await scrapePage(page, url, wait_until, wait_after_load, timeout, check_selector);
     const pageError = result.status !== 200 ? getError(result.status) : undefined;
 
     if (!pageError) {

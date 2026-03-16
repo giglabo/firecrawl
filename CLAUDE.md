@@ -28,29 +28,29 @@ This is a fork of `mendableai/firecrawl` (upstream). Our remote layout:
 
 ### Our custom features (must survive merges)
 
-We extend upstream with self-hosted branding, DNA extraction, scroll screenshots, and pluggable storage. All features use **existing upstream API endpoints** (`POST /v1/scrape`, `POST /v2/scrape`) — no new public routes. Changes are additive request/response fields.
+We extend upstream with self-hosted branding, DNA extraction, scroll screenshots, pluggable storage, and configurable `waitUntil`. All features use **existing upstream API endpoints** (`POST /v1/scrape`, `POST /v2/scrape`) — no new public routes. Changes are additive request/response fields.
 
 **New files (ours, no conflict risk):**
 - `apps/api/src/lib/storage/` — pluggable screenshot storage (S3/MinIO, local filesystem)
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dna-script/` — DNA extraction scripts
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dnaScript.ts` — DNA script bundler
 - `apps/playwright-service-ts/helpers/dismiss_cookie_banners.ts` — cookie banner dismissal
-- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts` — tests
+- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts` — tests
 - `docker-compose.selfhost.yaml`, `docker-compose.selfhost-local.yaml`, `selfhost.sh`
 - Docs: `SELFHOST.md`, `BRANDING-SCRIPTS.md`, `DNA-SCRIPTS.md`, `SCREENSHOT-STORAGE.md`, `SCROLL-SCREENSHOTS.md`, `CUSTOM_IMAGES.md`
 
 **Modified upstream files (conflict-prone on merge):**
-- `apps/api/src/controllers/v2/types.ts` — added `brandingFormatWithOptions`, `dnaFormatWithOptions` schemas, `storage` field, `screenshots[]` and `dna` response fields
-- `apps/api/src/controllers/v1/types.ts` — added `screenshots[]` to Document
+- `apps/api/src/controllers/v2/types.ts` — added `brandingFormatWithOptions`, `dnaFormatWithOptions` schemas, `storage` field, `screenshots[]` and `dna` response fields, `waitUntil` option
+- `apps/api/src/controllers/v1/types.ts` — added `screenshots[]` to Document, `waitUntil` option
 - `apps/api/src/config.ts` — added env vars for storage, branding/DNA script customization
 - `apps/api/src/scraper/scrapeURL/engines/index.ts` — added `dna` feature flag to all engines, **enabled `screenshot`, `branding`, `dna` on the standalone `playwright` engine**
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/index.ts` — DNA script execution alongside branding in chrome-cdp
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/brandingScript.ts` — 3-layer override system (per-request → env file → built-in)
-- `apps/api/src/scraper/scrapeURL/engines/playwright/index.ts` — JS execution, screenshot params, device emulation, branding/DNA script passing
+- `apps/api/src/scraper/scrapeURL/engines/playwright/index.ts` — JS execution, screenshot params, device emulation, branding/DNA script passing, `waitUntil` smart defaults
 - `apps/api/src/scraper/scrapeURL/transformers/index.ts` — `deriveDnaFromActions`, enhanced `deriveBrandingFromActions`, `screenshots`/`dna` in `coerceFieldsToFormats`
 - `apps/api/src/scraper/scrapeURL/transformers/uploadScreenshot.ts` — async pluggable storage with provider priority
 - `apps/api/src/scraper/scrapeURL/index.ts` — `dna` feature flag, `screenshots` propagation
-- `apps/playwright-service-ts/api.ts` — scroll screenshots, cookie dismissal, JS execution, device emulation
+- `apps/playwright-service-ts/api.ts` — scroll screenshots, cookie dismissal, JS execution, device emulation, configurable `waitUntil` (was hardcoded to `'load'`)
 
 ### Merging upstream
 
@@ -58,7 +58,7 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
 
 **Rules when resolving conflicts:**
 
-1. **Keep all our custom features.** Our format schemas (`brandingFormatWithOptions`, `dnaFormatWithOptions`), storage config, scroll screenshot fields, and DNA extraction must survive. If upstream adds new formats/fields, include them alongside ours.
+1. **Keep all our custom features.** Our format schemas (`brandingFormatWithOptions`, `dnaFormatWithOptions`), storage config, scroll screenshot fields, DNA extraction, and `waitUntil` option must survive. If upstream adds new formats/fields, include them alongside ours.
 
 2. **The standalone `playwright` engine is critical for us.** Upstream may disable or strip features from it (they already disabled `fire-engine;playwright` and set standalone playwright features to `false`). Always re-enable our feature flags on the `playwright` engine block:
    ```
@@ -71,8 +71,9 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
 
 5. **`playwright-service-ts/api.ts` is the most conflict-prone file.** When merging upstream changes here:
    - Keep upstream's security hardening (SSRF protection, DNS validation)
-   - Keep our additions (cookie dismissal, JS execution, scroll screenshots, device emulation)
+   - Keep our additions (cookie dismissal, JS execution, scroll screenshots, device emulation, configurable `waitUntil`)
    - If upstream changes `createContext` signature, adapt ours to match while preserving our `blockMedia` and `deviceName` parameters
+   - Keep the `wait_until` parameter in the request interface and the `scrapePage` call — upstream hardcodes `'load'`, we make it configurable
 
 6. **`uploadScreenshot.ts` — keep our async pluggable storage.** If upstream changes the upload logic, adapt but preserve the provider resolution chain: per-request config → env config → Supabase → data URI fallback.
 
@@ -80,7 +81,7 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
    ```bash
    cd apps/api && npx tsc --noEmit
    cd apps/playwright-service-ts && npx tsc --noEmit
-   pnpm harness jest -- --testPathPattern="scrape-dna|scrape-storage"
+   pnpm harness jest -- --testPathPattern="scrape-dna|scrape-storage|scrape-waituntil"
    ```
 
 See `MERGE-GUIDE.md` for a detailed walkthrough of the last merge (upstream as of 2026-03-14).
