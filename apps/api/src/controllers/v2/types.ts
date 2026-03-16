@@ -601,6 +601,7 @@ const baseScrapeOptions = z.strictObject({
   __experimental_omce: z.boolean().prefault(false).optional(),
   __experimental_omceDomain: z.string().optional(),
   __experimental_engpicker: z.boolean().prefault(false).optional(),
+  trackBytesDownloaded: z.boolean().prefault(false),
   storage: z
     .strictObject({
       provider: z.enum(["s3", "local"]),
@@ -1154,6 +1155,7 @@ export type Document = {
     indexId?: string; // ID used to store the document in the index (GCS)
     concurrencyLimited?: boolean;
     concurrencyQueueDurationMs?: number;
+    bytesDownloaded?: number;
     // [key: string]: string | string[] | number | { smartScrape: number; other: number; total: number } | undefined;
   };
   serpResults?: {

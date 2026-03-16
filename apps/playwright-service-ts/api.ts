@@ -94,6 +94,7 @@ interface UrlModel {
   screenshot_device?: string;
   dismiss_cookie_banners?: boolean;
   wait_until?: 'load' | 'domcontentloaded' | 'networkidle';
+  track_bytes_downloaded?: boolean;
   proxy?: {
     server: string;
     username?: string;
@@ -347,6 +348,7 @@ app.post('/scrape', async (req: Request, res: Response) => {
     screenshot_device,
     dismiss_cookie_banners = true,
     wait_until = 'load',
+    track_bytes_downloaded = false,
     proxy: request_proxy,
   }: UrlModel = req.body;
 
@@ -385,11 +387,24 @@ app.post('/scrape', async (req: Request, res: Response) => {
 
   let requestContext: BrowserContext | null = null;
   let page: Page | null = null;
+  let byteTracker: { total: number; session: any } | null = null;
 
   try {
     const shouldBlockMedia = execute_javascript ? false : BLOCK_MEDIA;
     requestContext = await createContext(skip_tls_verification, shouldBlockMedia, screenshot_device, request_proxy);
     page = await requestContext.newPage();
+
+    // CDP byte tracking (opt-in)
+    byteTracker = track_bytes_downloaded ? { total: 0, session: null as any } : null;
+    if (byteTracker) {
+      const tracker = byteTracker;
+      const cdpSession = await requestContext.newCDPSession(page);
+      await cdpSession.send('Network.enable');
+      cdpSession.on('Network.loadingFinished', (params: any) => {
+        tracker.total += params.encodedDataLength ?? 0;
+      });
+      tracker.session = cdpSession;
+    }
 
     if (headers) {
       await page.setExtraHTTPHeaders(headers);
@@ -476,12 +491,16 @@ app.post('/scrape', async (req: Request, res: Response) => {
       ...(javascriptReturn !== undefined && { javascriptReturn }),
       ...(screenshotData !== undefined && { screenshot: screenshotData }),
       ...(screenshotsData !== undefined && { screenshots: screenshotsData }),
+      ...(byteTracker ? { bytesDownloaded: byteTracker.total } : {}),
     });
 
   } catch (error) {
     console.error('Scrape error:', error);
     res.status(500).json({ error: 'An error occurred while fetching the page.' });
   } finally {
+    if (byteTracker?.session) {
+      try { await byteTracker.session.detach(); } catch (_) {}
+    }
     if (page) await page.close();
     if (requestContext) await requestContext.close();
     pageSemaphore.release();

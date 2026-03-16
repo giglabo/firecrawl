@@ -824,6 +824,9 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
               }
           : {}),
         postprocessorsUsed: engineResult.postprocessorsUsed,
+        ...(engineResult.bytesDownloaded !== undefined
+          ? { bytesDownloaded: engineResult.bytesDownloaded }
+          : {}),
       },
     };
 
