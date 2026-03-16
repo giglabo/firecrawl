@@ -8,6 +8,45 @@ import { hasFormatOfType } from "../../../../lib/format-utils";
 import { getBrandingScript } from "../fire-engine/brandingScript";
 import { getDnaScript } from "../fire-engine/dnaScript";
 
+// Resolve proxy config for playwright service.
+// Priority: per-request proxyConfig > named proxy from env > nothing (service uses its global)
+function resolvePlaywrightProxy(
+  meta: Meta,
+): { server: string; username?: string; password?: string } | undefined {
+  // Level 1: per-request proxyConfig always wins
+  if (meta.options.proxyConfig) {
+    return meta.options.proxyConfig;
+  }
+
+  // Level 2: named proxy from env mapping based on stealthProxy feature flag
+  const usesStealth = meta.featureFlags.has("stealthProxy");
+  if (usesStealth && config.PLAYWRIGHT_PROXY_STEALTH) {
+    return {
+      server: config.PLAYWRIGHT_PROXY_STEALTH,
+      ...(config.PLAYWRIGHT_PROXY_STEALTH_USERNAME
+        ? { username: config.PLAYWRIGHT_PROXY_STEALTH_USERNAME }
+        : {}),
+      ...(config.PLAYWRIGHT_PROXY_STEALTH_PASSWORD
+        ? { password: config.PLAYWRIGHT_PROXY_STEALTH_PASSWORD }
+        : {}),
+    };
+  }
+  if (!usesStealth && config.PLAYWRIGHT_PROXY_BASIC) {
+    return {
+      server: config.PLAYWRIGHT_PROXY_BASIC,
+      ...(config.PLAYWRIGHT_PROXY_BASIC_USERNAME
+        ? { username: config.PLAYWRIGHT_PROXY_BASIC_USERNAME }
+        : {}),
+      ...(config.PLAYWRIGHT_PROXY_BASIC_PASSWORD
+        ? { password: config.PLAYWRIGHT_PROXY_BASIC_PASSWORD }
+        : {}),
+    };
+  }
+
+  // Level 3: nothing — playwright service will use its global PROXY_SERVER env
+  return undefined;
+}
+
 export async function scrapeURLWithPlaywright(
   meta: Meta,
 ): Promise<EngineScrapeResult> {
@@ -27,6 +66,8 @@ export async function scrapeURLWithPlaywright(
   const waitUntil =
     meta.options.waitUntil ?? (needsFullLoad ? "load" : "domcontentloaded");
 
+  const resolvedProxy = resolvePlaywrightProxy(meta);
+
   const response = await robustFetch({
     url: config.PLAYWRIGHT_MICROSERVICE_URL!,
     headers: {
@@ -40,6 +81,7 @@ export async function scrapeURLWithPlaywright(
       skip_tls_verification: meta.options.skipTlsVerification,
       dismiss_cookie_banners: true,
       wait_until: waitUntil,
+      ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
       ...(() => {
         const brandingScript = hasBranding
           ? getBrandingScript({
@@ -165,7 +207,7 @@ export async function scrapeURLWithPlaywright(
     ...(response.screenshot ? { screenshot: response.screenshot } : {}),
     ...(response.screenshots ? { screenshots: response.screenshots } : {}),
 
-    proxyUsed: "basic",
+    proxyUsed: meta.featureFlags.has("stealthProxy") ? "stealth" : "basic",
   };
 }
 

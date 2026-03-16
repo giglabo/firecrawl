@@ -94,6 +94,11 @@ interface UrlModel {
   screenshot_device?: string;
   dismiss_cookie_banners?: boolean;
   wait_until?: 'load' | 'domcontentloaded' | 'networkidle';
+  proxy?: {
+    server: string;
+    username?: string;
+    password?: string;
+  };
 }
 
 let browser: Browser;
@@ -117,6 +122,7 @@ const createContext = async (
   skipTlsVerification: boolean = false,
   blockMedia: boolean = BLOCK_MEDIA,
   deviceName?: string,
+  proxyConfig?: { server: string; username?: string; password?: string },
 ) => {
   const deviceDescriptor = deviceName ? devices[deviceName] : undefined;
   const userAgent = deviceDescriptor?.userAgent ?? new UserAgent().toString();
@@ -134,7 +140,10 @@ const createContext = async (
     } : {}),
   };
 
-  if (PROXY_SERVER && PROXY_USERNAME && PROXY_PASSWORD) {
+  // Proxy resolution: per-request > global env > none
+  if (proxyConfig) {
+    contextOptions.proxy = proxyConfig;
+  } else if (PROXY_SERVER && PROXY_USERNAME && PROXY_PASSWORD) {
     contextOptions.proxy = {
       server: PROXY_SERVER,
       username: PROXY_USERNAME,
@@ -338,6 +347,7 @@ app.post('/scrape', async (req: Request, res: Response) => {
     screenshot_device,
     dismiss_cookie_banners = true,
     wait_until = 'load',
+    proxy: request_proxy,
   }: UrlModel = req.body;
 
   console.log(`================= Scrape Request =================`);
@@ -378,7 +388,7 @@ app.post('/scrape', async (req: Request, res: Response) => {
 
   try {
     const shouldBlockMedia = execute_javascript ? false : BLOCK_MEDIA;
-    requestContext = await createContext(skip_tls_verification, shouldBlockMedia, screenshot_device);
+    requestContext = await createContext(skip_tls_verification, shouldBlockMedia, screenshot_device, request_proxy);
     page = await requestContext.newPage();
 
     if (headers) {

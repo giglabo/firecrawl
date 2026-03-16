@@ -28,29 +28,29 @@ This is a fork of `mendableai/firecrawl` (upstream). Our remote layout:
 
 ### Our custom features (must survive merges)
 
-We extend upstream with self-hosted branding, DNA extraction, scroll screenshots, pluggable storage, and configurable `waitUntil`. All features use **existing upstream API endpoints** (`POST /v1/scrape`, `POST /v2/scrape`) — no new public routes. Changes are additive request/response fields.
+We extend upstream with self-hosted branding, DNA extraction, scroll screenshots, pluggable storage, configurable `waitUntil`, and per-request proxy for playwright. All features use **existing upstream API endpoints** (`POST /v1/scrape`, `POST /v2/scrape`) — no new public routes. Changes are additive request/response fields.
 
 **New files (ours, no conflict risk):**
 - `apps/api/src/lib/storage/` — pluggable screenshot storage (S3/MinIO, local filesystem)
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dna-script/` — DNA extraction scripts
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dnaScript.ts` — DNA script bundler
 - `apps/playwright-service-ts/helpers/dismiss_cookie_banners.ts` — cookie banner dismissal
-- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts` — tests
+- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts`, `scrape-proxy.test.ts` — tests
 - `docker-compose.selfhost.yaml`, `docker-compose.selfhost-local.yaml`, `selfhost.sh`
 - Docs: `SELFHOST.md`, `BRANDING-SCRIPTS.md`, `DNA-SCRIPTS.md`, `SCREENSHOT-STORAGE.md`, `SCROLL-SCREENSHOTS.md`, `CUSTOM_IMAGES.md`
 
 **Modified upstream files (conflict-prone on merge):**
-- `apps/api/src/controllers/v2/types.ts` — added `brandingFormatWithOptions`, `dnaFormatWithOptions` schemas, `storage` field, `screenshots[]` and `dna` response fields, `waitUntil` option
-- `apps/api/src/controllers/v1/types.ts` — added `screenshots[]` to Document, `waitUntil` option
-- `apps/api/src/config.ts` — added env vars for storage, branding/DNA script customization
-- `apps/api/src/scraper/scrapeURL/engines/index.ts` — added `dna` feature flag to all engines, **enabled `screenshot`, `branding`, `dna` on the standalone `playwright` engine**
+- `apps/api/src/controllers/v2/types.ts` — added `brandingFormatWithOptions`, `dnaFormatWithOptions` schemas, `storage` field, `screenshots[]` and `dna` response fields, `waitUntil` option, `proxyConfig` object
+- `apps/api/src/controllers/v1/types.ts` — added `screenshots[]` to Document, `waitUntil` option, `proxyConfig` object
+- `apps/api/src/config.ts` — added env vars for storage, branding/DNA script customization, `PLAYWRIGHT_PROXY_*` named proxy mapping
+- `apps/api/src/scraper/scrapeURL/engines/index.ts` — added `dna` feature flag to all engines, **enabled `screenshot`, `branding`, `dna`, `stealthProxy` on the standalone `playwright` engine**
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/index.ts` — DNA script execution alongside branding in chrome-cdp
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/brandingScript.ts` — 3-layer override system (per-request → env file → built-in)
-- `apps/api/src/scraper/scrapeURL/engines/playwright/index.ts` — JS execution, screenshot params, device emulation, branding/DNA script passing, `waitUntil` smart defaults
+- `apps/api/src/scraper/scrapeURL/engines/playwright/index.ts` — JS execution, screenshot params, device emulation, branding/DNA script passing, `waitUntil` smart defaults, `resolvePlaywrightProxy()` with 3-level resolution
 - `apps/api/src/scraper/scrapeURL/transformers/index.ts` — `deriveDnaFromActions`, enhanced `deriveBrandingFromActions`, `screenshots`/`dna` in `coerceFieldsToFormats`
 - `apps/api/src/scraper/scrapeURL/transformers/uploadScreenshot.ts` — async pluggable storage with provider priority
 - `apps/api/src/scraper/scrapeURL/index.ts` — `dna` feature flag, `screenshots` propagation
-- `apps/playwright-service-ts/api.ts` — scroll screenshots, cookie dismissal, JS execution, device emulation, configurable `waitUntil` (was hardcoded to `'load'`)
+- `apps/playwright-service-ts/api.ts` — scroll screenshots, cookie dismissal, JS execution, device emulation, configurable `waitUntil` (was hardcoded to `'load'`), per-request proxy via `createContext`
 
 ### Merging upstream
 
@@ -62,7 +62,7 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
 
 2. **The standalone `playwright` engine is critical for us.** Upstream may disable or strip features from it (they already disabled `fire-engine;playwright` and set standalone playwright features to `false`). Always re-enable our feature flags on the `playwright` engine block:
    ```
-   screenshot: true, "screenshot@fullScreen": true, branding: true, dna: true
+   screenshot: true, "screenshot@fullScreen": true, branding: true, dna: true, stealthProxy: true
    ```
 
 3. **We do NOT need `fire-engine;playwright`.** Upstream removed it and we never used it — our self-hosted setup uses the standalone playwright engine directly. Do not restore `fire-engine;playwright` references.
@@ -81,7 +81,7 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
    ```bash
    cd apps/api && npx tsc --noEmit
    cd apps/playwright-service-ts && npx tsc --noEmit
-   pnpm harness jest -- --testPathPattern="scrape-dna|scrape-storage|scrape-waituntil"
+   pnpm harness jest -- --testPathPattern="scrape-dna|scrape-storage|scrape-waituntil|scrape-proxy"
    ```
 
 See `MERGE-GUIDE.md` for a detailed walkthrough of the last merge (upstream as of 2026-03-14).
