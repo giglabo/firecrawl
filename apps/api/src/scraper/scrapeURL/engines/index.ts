@@ -129,6 +129,8 @@ export type EngineScrapeResult = {
 
   branding?: BrandingProfile;
 
+  bytesDownloaded?: number;
+
   pdfMetadata?: PdfMetadata;
 
   cacheInfo?: {

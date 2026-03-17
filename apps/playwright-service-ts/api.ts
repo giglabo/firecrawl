@@ -94,6 +94,7 @@ interface UrlModel {
   screenshot_device?: string;
   dismiss_cookie_banners?: boolean;
   wait_until?: 'load' | 'domcontentloaded' | 'networkidle';
+  track_bytes_downloaded?: boolean;
   proxy?: {
     server: string;
     username?: string;
@@ -257,46 +258,165 @@ async function captureScrollScreenshots(page: Page, options: {
   scrollWait: number;
   maxScrolls: number;
 }): Promise<string[]> {
-  // Force-enable scrolling: remove overflow:hidden and nuke fixed overlays
-  await page.evaluate(() => {
-    // Use setProperty with !important directly on elements — wins over <style> tags
-    document.documentElement.style.setProperty('overflow', 'auto', 'important');
-    document.documentElement.style.setProperty('height', 'auto', 'important');
-    document.documentElement.style.setProperty('position', 'static', 'important');
-    document.body.style.setProperty('overflow', 'auto', 'important');
-    document.body.style.setProperty('height', 'auto', 'important');
-    document.body.style.setProperty('position', 'static', 'important');
+  // Detect the real scroll container: some sites use a custom scrollable div
+  // instead of body scroll (overflow:hidden on html/body, overflow:auto on a child).
+  // We find the deepest element whose scrollHeight significantly exceeds viewport.
+  const scrollContainerSelector: string | null = await page.evaluate(() => {
+    const vh = window.innerHeight;
+    // Check if normal body scrolling works
+    const bodyScroll = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+    if (bodyScroll > vh * 1.5) return null; // body scroll works fine
 
-    // Remove fixed/sticky overlays that block content (cookie banners, modals)
+    // Find the custom scroll container
+    let best: HTMLElement | null = null;
+    let bestHeight = 0;
+    const candidates = document.querySelectorAll('main, [class*="scroll"], [class*="content"], [class*="wrapper"], [class*="app"], #root, #app, #__next');
+    candidates.forEach(el => {
+      const h = el.scrollHeight;
+      if (h > vh * 1.5 && h > bestHeight) {
+        best = el as HTMLElement;
+        bestHeight = h;
+      }
+    });
+    // Fallback: check direct children of body
+    if (!best) {
+      for (const child of document.body.children) {
+        const h = (child as HTMLElement).scrollHeight;
+        if (h > vh * 1.5 && h > bestHeight) {
+          best = child as HTMLElement;
+          bestHeight = h;
+        }
+      }
+    }
+    if (!best) return null;
+    // Generate a selector for the element
+    if (best.id) return '#' + best.id;
+    // Tag + classes
+    const tag = best.tagName.toLowerCase();
+    const cls = Array.from(best.classList).slice(0, 3).map(c => '.' + c).join('');
+    return tag + cls;
+  });
+
+  const useCustomContainer = scrollContainerSelector !== null;
+  console.log(`Scroll container: ${useCustomContainer ? scrollContainerSelector : 'window (body scroll)'}`);
+
+  // Remove fixed/sticky overlays that block content (cookie banners, modals)
+  // Hide them (display:none) instead of removing to avoid layout collapse.
+  await page.evaluate(() => {
     document.querySelectorAll('*').forEach(el => {
       const tag = el.tagName.toLowerCase();
       if (tag === 'html' || tag === 'body') return;
       const cs = window.getComputedStyle(el);
       if (cs.position === 'fixed' || cs.position === 'sticky') {
         const rect = (el as HTMLElement).getBoundingClientRect();
-        // Only remove large overlays (covering >40% of viewport)
         if (rect.width > window.innerWidth * 0.4 && rect.height > window.innerHeight * 0.4) {
-          (el as HTMLElement).remove();
+          (el as HTMLElement).style.setProperty('display', 'none', 'important');
         }
       }
     });
   });
+
+  // Disable smooth scrolling so scrollTo is instant
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('scroll-behavior', 'auto', 'important');
+  });
+
+  if (!useCustomContainer) {
+    // Only unlock overflow if it's actually hidden/clip — don't touch if already scrollable
+    await page.evaluate(() => {
+      const htmlOverflow = getComputedStyle(document.documentElement).overflow;
+      const bodyOverflow = getComputedStyle(document.body).overflow;
+      if (htmlOverflow === 'hidden' || htmlOverflow === 'clip') {
+        document.documentElement.style.setProperty('overflow', 'auto', 'important');
+      }
+      if (bodyOverflow === 'hidden' || bodyOverflow === 'clip') {
+        document.body.style.setProperty('overflow', 'auto', 'important');
+      }
+    });
+  }
   await page.waitForTimeout(200);
 
   const viewportHeight = page.viewportSize()!.height;
-  const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
+
+  // Helper functions that work with either window scroll or custom container
+  const getScrollHeight = async () => {
+    if (useCustomContainer) {
+      return page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return el ? el.scrollHeight : 0;
+      }, scrollContainerSelector!);
+    }
+    return page.evaluate(() => Math.max(
+      document.body.scrollHeight, document.documentElement.scrollHeight,
+      document.body.offsetHeight, document.documentElement.offsetHeight,
+    ));
+  };
+  const scrollTo = async (y: number) => {
+    if (useCustomContainer) {
+      return page.evaluate(([sel, scrollY]) => {
+        const el = document.querySelector(sel as string);
+        if (el) {
+          el.scrollTop = scrollY as number;
+          el.dispatchEvent(new Event('scroll'));
+        }
+        window.dispatchEvent(new Event('scroll'));
+      }, [scrollContainerSelector!, y] as const);
+    }
+    return page.evaluate((scrollY) => {
+      window.scrollTo({ top: scrollY, left: 0, behavior: 'instant' });
+      window.dispatchEvent(new Event('scroll'));
+    }, y);
+  };
+  const getScrollY = async () => {
+    if (useCustomContainer) {
+      return page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return el ? el.scrollTop : 0;
+      }, scrollContainerSelector!);
+    }
+    return page.evaluate(() => window.scrollY);
+  };
+
+  // Pre-scroll: walk the entire page to trigger lazy-loaded content
+  let preScrollHeight = await getScrollHeight();
+  for (let y = 0; y < preScrollHeight && y < options.maxScrolls * viewportHeight; y += viewportHeight) {
+    await scrollTo(y);
+    await page.waitForTimeout(150);
+    preScrollHeight = await getScrollHeight();
+  }
+  // Scroll to very bottom
+  await scrollTo(preScrollHeight);
+  await page.waitForTimeout(options.scrollWait);
+  // Back to top — force multiple times to ensure it sticks
+  await scrollTo(0);
+  await page.waitForTimeout(300);
+  // Verify we're at top, retry if not
+  const resetY = await getScrollY();
+  if (resetY > 0) {
+    console.log(`Scroll reset incomplete (at ${resetY}), forcing again`);
+    await page.evaluate(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    });
+    await page.waitForTimeout(300);
+  }
+
+  // Now measure the fully-expanded page
+  const scrollHeight = await getScrollHeight();
   const totalPositions = Math.min(
     Math.ceil(scrollHeight / viewportHeight),
     options.maxScrolls
   );
+  console.log(`Scroll metrics: viewportHeight=${viewportHeight}, scrollHeight=${scrollHeight}, totalPositions=${totalPositions}`);
 
   const screenshots: string[] = [];
   for (let i = 0; i < totalPositions; i++) {
-    await page.evaluate((y) => window.scrollTo(0, y), i * viewportHeight);
+    await scrollTo(i * viewportHeight);
     await page.waitForTimeout(options.scrollWait);
 
     // Verify the scroll actually moved
-    const actualY = await page.evaluate(() => window.scrollY);
+    const actualY = await getScrollY();
     if (i > 0 && actualY === 0) {
       console.log(`Scroll stuck at position 0 after ${i} attempts, stopping`);
       break;
@@ -313,7 +433,7 @@ async function captureScrollScreenshots(page: Page, options: {
   }
 
   // Scroll back to top
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await scrollTo(0);
   return screenshots;
 }
 
@@ -347,6 +467,7 @@ app.post('/scrape', async (req: Request, res: Response) => {
     screenshot_device,
     dismiss_cookie_banners = true,
     wait_until = 'load',
+    track_bytes_downloaded = false,
     proxy: request_proxy,
   }: UrlModel = req.body;
 
@@ -385,11 +506,24 @@ app.post('/scrape', async (req: Request, res: Response) => {
 
   let requestContext: BrowserContext | null = null;
   let page: Page | null = null;
+  let byteTracker: { total: number; session: any } | null = null;
 
   try {
     const shouldBlockMedia = execute_javascript ? false : BLOCK_MEDIA;
     requestContext = await createContext(skip_tls_verification, shouldBlockMedia, screenshot_device, request_proxy);
     page = await requestContext.newPage();
+
+    // CDP byte tracking (opt-in)
+    byteTracker = track_bytes_downloaded ? { total: 0, session: null as any } : null;
+    if (byteTracker) {
+      const tracker = byteTracker;
+      const cdpSession = await requestContext.newCDPSession(page);
+      await cdpSession.send('Network.enable');
+      cdpSession.on('Network.loadingFinished', (params: any) => {
+        tracker.total += params.encodedDataLength ?? 0;
+      });
+      tracker.session = cdpSession;
+    }
 
     if (headers) {
       await page.setExtraHTTPHeaders(headers);
@@ -433,16 +567,19 @@ app.post('/scrape', async (req: Request, res: Response) => {
     let screenshotData: string | undefined;
     let screenshotsData: string[] | undefined;
 
+    console.log(`Screenshot flags: scroll_capture=${screenshot_scroll_capture}, requested=${screenshot_requested}, full_page=${screenshot_full_page}`);
     if (screenshot_scroll_capture && (screenshot_requested || screenshot_full_page)) {
       try {
         if (screenshot_viewport) {
           await page.setViewportSize(screenshot_viewport);
         }
+        console.log(`Starting scroll capture with maxScrolls=${screenshot_max_scrolls ?? 20}`);
         screenshotsData = await captureScrollScreenshots(page, {
           quality: screenshot_quality,
           scrollWait: screenshot_scroll_wait ?? 300,
           maxScrolls: screenshot_max_scrolls ?? 20,
         });
+        console.log(`Scroll capture complete: ${screenshotsData.length} screenshots`);
         screenshotData = screenshotsData[0]; // backward compat
       } catch (error) {
         console.error('Scroll screenshot error:', error);
@@ -476,12 +613,16 @@ app.post('/scrape', async (req: Request, res: Response) => {
       ...(javascriptReturn !== undefined && { javascriptReturn }),
       ...(screenshotData !== undefined && { screenshot: screenshotData }),
       ...(screenshotsData !== undefined && { screenshots: screenshotsData }),
+      ...(byteTracker ? { bytesDownloaded: byteTracker.total } : {}),
     });
 
   } catch (error) {
     console.error('Scrape error:', error);
     res.status(500).json({ error: 'An error occurred while fetching the page.' });
   } finally {
+    if (byteTracker?.session) {
+      try { await byteTracker.session.detach(); } catch (_) {}
+    }
     if (page) await page.close();
     if (requestContext) await requestContext.close();
     pageSemaphore.release();

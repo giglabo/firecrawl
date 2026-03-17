@@ -312,7 +312,20 @@ async function deriveBrandingFromActions(
       ? javascriptReturn.branding
       : javascriptReturn;
 
-  document.actions!.javascriptReturns!.splice(brandingReturnIndex, 1);
+  // Only splice if this entry doesn't also carry DNA data (combined branding+DNA IIFE).
+  // If it does, leave the entry so deriveDnaFromActions can find it next.
+  const brandingValue = document.actions!.javascriptReturns![
+    brandingReturnIndex
+  ].value as any;
+  if (
+    !(
+      brandingValue &&
+      typeof brandingValue === "object" &&
+      "dna" in brandingValue
+    )
+  ) {
+    document.actions!.javascriptReturns!.splice(brandingReturnIndex, 1);
+  }
 
   if (shouldSkipProcessor) {
     // Raw passthrough -- custom scripts get their output directly

@@ -82,6 +82,7 @@ export async function scrapeURLWithPlaywright(
       dismiss_cookie_banners: true,
       wait_until: waitUntil,
       ...(resolvedProxy ? { proxy: resolvedProxy } : {}),
+      track_bytes_downloaded: meta.options.trackBytesDownloaded || false,
       ...(() => {
         const brandingScript = hasBranding
           ? getBrandingScript({
@@ -152,6 +153,7 @@ export async function scrapeURLWithPlaywright(
       javascriptReturn: z.string().optional(),
       screenshot: z.string().optional(),
       screenshots: z.array(z.string()).optional(),
+      bytesDownloaded: z.number().optional(),
     }),
     mock: meta.mock,
     abort: meta.abort.asSignal(),
@@ -206,6 +208,9 @@ export async function scrapeURLWithPlaywright(
     ...(actions ? { actions } : {}),
     ...(response.screenshot ? { screenshot: response.screenshot } : {}),
     ...(response.screenshots ? { screenshots: response.screenshots } : {}),
+    ...(response.bytesDownloaded !== undefined
+      ? { bytesDownloaded: response.bytesDownloaded }
+      : {}),
 
     proxyUsed: meta.featureFlags.has("stealthProxy") ? "stealth" : "basic",
   };
