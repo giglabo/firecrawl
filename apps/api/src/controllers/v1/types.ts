@@ -17,6 +17,10 @@ import { integrationSchema } from "../../utils/integration";
 import { includesFormat } from "../../lib/format-utils";
 import { webhookSchema } from "../../services/webhook/schema";
 import { BrandingProfile } from "../../types/branding";
+import { ProductProfile } from "../../types/product";
+import { MenuProfile } from "../../types/menu";
+import { threatProtectionOverrideSchema } from "../../lib/threat-protection/config";
+import { auditMetadataSchema } from "../../lib/siem-logging/types";
 
 type Format =
   | "markdown"
@@ -29,7 +33,9 @@ type Format =
   | "json"
   | "summary"
   | "changeTracking"
-  | "branding";
+  | "branding"
+  | "product"
+  | "menu";
 
 export const url = z.preprocess(
   x => {
@@ -429,6 +435,8 @@ const baseScrapeOptions = z.strictObject({
       "summary",
       "changeTracking",
       "branding",
+      "product",
+      "menu",
     ])
     .array()
     .optional()
@@ -531,11 +539,16 @@ const baseScrapeOptions = z.strictObject({
     .gte(0)
     .prefault(1 * 24 * 60 * 60 * 1000),
   storeInCache: z.boolean().prefault(true),
+  // Enterprise: per-request field-level override of the org's threat
+  // protection policy. Gated on the team flag + org config (checkPermissions).
+  threatProtection: threatProtectionOverrideSchema.optional(),
+  auditMetadata: auditMetadataSchema.optional(),
   // @deprecated
   __experimental_cache: z.boolean().prefault(false).optional(),
   __searchPreviewToken: z.string().optional(),
   __experimental_omce: z.boolean().prefault(false).optional(),
   __experimental_omceDomain: z.string().optional(),
+  __forceFirePDF: z.boolean().prefault(false).optional(),
 });
 
 const fire1RefineOpts = {
@@ -746,6 +759,7 @@ const extractV1Options = z
     __experimental_showCostTracking: z.boolean().prefault(false),
     ignoreInvalidURLs: z.boolean().prefault(false),
     webhook: webhookSchema.optional(),
+    threatProtection: threatProtectionOverrideSchema.optional(),
   })
   .refine(obj => obj.urls || obj.prompt, {
     error: "Either 'urls' or 'prompt' must be provided.",
@@ -864,7 +878,14 @@ const crawlerOptions = z.strictObject({
   deduplicateSimilarURLs: z.boolean().prefault(true),
   ignoreQueryParameters: z.boolean().prefault(false),
   regexOnFullURL: z.boolean().prefault(false),
-  delay: z.number().positive().optional(),
+  delay: z
+    .number()
+    .positive()
+    .max(
+      60,
+      "The delay parameter is measured in seconds and cannot exceed 60 seconds.",
+    )
+    .optional(),
 });
 
 // export type CrawlerOptions = {
@@ -967,6 +988,8 @@ const mapRequestSchemaBase = crawlerOptions
     ignoreCache: z.boolean().prefault(false),
     location: locationSchema,
     headers: z.record(z.string(), z.string()).optional(),
+    threatProtection: threatProtectionOverrideSchema.optional(),
+    auditMetadata: auditMetadataSchema.optional(),
   });
 
 export const mapRequestSchema = mapRequestSchemaBase.strict();
@@ -996,6 +1019,8 @@ export type Document = {
   json?: any;
   summary?: string;
   branding?: BrandingProfile;
+  product?: ProductProfile;
+  menu?: MenuProfile;
   warning?: string;
   actions?: {
     screenshots?: string[];
@@ -1069,6 +1094,7 @@ export type Document = {
     scrapeId?: string;
     error?: string;
     numPages?: number;
+    totalPages?: number;
     contentType?: string;
     timezone?: string;
     proxyUsed: "basic" | "stealth";
@@ -1093,6 +1119,8 @@ export type ErrorResponse = {
   code?: ErrorCodes;
   error: string;
   details?: any;
+  sponsor_status?: string;
+  login_url?: string;
 };
 
 export type ScrapeResponse =
@@ -1126,6 +1154,7 @@ export interface URLTrace {
 
 export interface ExtractResponse {
   success: boolean;
+  code?: ErrorCodes;
   error?: string;
   data?: any;
   scrape_id?: string;
@@ -1192,6 +1221,16 @@ export type CrawlStatusResponse =
       expiresAt: string;
       next?: string;
       data: Document[];
+    }
+  | {
+      success: false;
+      status: "failed";
+      error: string;
+      completed: number;
+      total: number;
+      creditsUsed: number;
+      expiresAt: string;
+      data: Document[];
     };
 
 export type OngoingCrawlsResponse =
@@ -1221,6 +1260,7 @@ export type CrawlErrorsResponse =
 
 type AuthObject = {
   team_id: string;
+  org_id?: string | null;
 };
 
 type Account = {
@@ -1230,40 +1270,15 @@ type Account = {
 export type AuthCreditUsageChunk = {
   api_key: string;
   api_key_id: number;
+  api_key_id_text?: string;
   team_id: string;
-  sub_id: string | null;
-  sub_current_period_start: string | null;
-  sub_current_period_end: string | null;
-  sub_user_id: string | null;
-  price_id: string | null;
-  price_credits: number; // credit limit with assoicated price, or free_credits (500) if free plan
-  price_should_be_graceful: boolean;
-  price_associated_auto_recharge_price_id: string | null;
-  credits_used: number;
-  coupon_credits: number; // do not rely on this number to be up to date after calling a billTeam
-  adjusted_credits_used: number; // credits this period minus coupons used
-  remaining_credits: number;
-  total_credits_sum: number;
-  plan_priority: {
-    bucketLimit: number;
-    planModifier: number;
-  };
-  rate_limits: {
-    crawl: number;
-    scrape: number;
-    search: number;
-    map: number;
-    extract: number;
-    preview: number;
-    crawlStatus: number;
-    extractStatus: number;
-    extractAgentPreview?: number;
-    scrapeAgentPreview?: number;
-    browser?: number;
-    browserExecute?: number;
-  };
-  concurrency: number;
+  org_id: string;
   flags: TeamFlags;
+
+  // teams.banned surfaced from auth_chunk_1 — banned teams are rejected (403)
+  // in supaAuthenticateUser. Optional because pre-rollout cached ACUC entries
+  // and the bypass/preview mocks omit it (treated as not banned).
+  is_banned?: boolean;
 
   // appended on JS-side
   is_extract?: boolean;
@@ -1277,18 +1292,48 @@ export type AuthCreditUsageChunk = {
 };
 
 export type TeamFlags = {
-  ignoreRobots?: boolean;
+  ignoreRobots?: "disabled" | "allowed" | "forced";
+  customRobotsAgent?: "disabled" | "allowed";
+  threatProtection?: "disabled" | "allowed" | "forced";
+  siemLogging?: boolean;
   unblockedDomains?: string[];
   forceZDR?: boolean;
   allowZDR?: boolean;
+  scrapeZDR?: "disabled" | "allowed" | "forced";
+  searchZDR?: "disabled" | "allowed" | "forced" | "forced-zdr" | "forced-anon";
   zdrCost?: number;
   checkRobotsOnScrape?: boolean;
   crawlTtlHours?: number;
   ipWhitelist?: boolean;
+  // gates the per-team API key IP allowlist (ip_restriction_config table)
+  ipRestriction?: boolean;
+  // gates the per-key scope/format lockdown (key_restriction_config table)
+  keyRestriction?: boolean;
   skipCountryCheck?: boolean;
   browserBeta?: boolean;
   bypassCreditChecks?: boolean;
   debugBranding?: boolean;
+  maxBrowserSessions?: number;
+  // POST /v2/search/:jobId/feedback returns 403 TEAM_OPTED_OUT when true.
+  searchFeedbackOptOut?: boolean;
+  researchBeta?: boolean;
+  enrichBeta?: boolean;
+  labsSearch?: boolean;
+  professionalProfileCompanyDataBeta?: boolean;
+  organizationDataSourceAccess?: Record<
+    string,
+    {
+      status?: "enabled" | "disabled" | "suspended" | string | null;
+      termsKey?: string | null;
+      termsVersion?: string | null;
+      termsAcceptedAt?: string | null;
+      enabledAt?: string | null;
+      disabledAt?: string | null;
+      disabledReason?: string | null;
+    }
+  >;
+  // routes the team's new queue work to the FoundationDB backend
+  nuqFdb?: boolean;
 } | null;
 
 export type AuthCreditUsageChunkFromTeam = Omit<
@@ -1406,6 +1451,7 @@ function fromLegacyCrawlerOptions(
     internalOptions: {
       v0CrawlOnlyUrls: x.returnOnlyUrls,
       teamId,
+      orgId: null,
     },
   };
 }
@@ -1471,6 +1517,7 @@ export function fromLegacyScrapeOptions(
       atsv: pageOptions.atsv,
       v0DisableJsDom: pageOptions.disableJsDom,
       teamId,
+      orgId: null,
     },
     // TODO: fallback, fetchPageContent, replaceAllPathsWithAbsolutePaths, includeLinks
   };
@@ -1521,6 +1568,7 @@ export const searchRequestSchema = z
     timeout: z.int().positive().finite().prefault(60000),
     ignoreInvalidURLs: z.boolean().optional().prefault(false),
     __searchPreviewToken: z.string().optional(),
+    threatProtection: threatProtectionOverrideSchema.optional(),
     scrapeOptions: baseScrapeOptions
       .extend({
         formats: z
@@ -1534,6 +1582,8 @@ export const searchRequestSchema = z
               "screenshot@fullPage",
               "extract",
               "json",
+              "product",
+              "menu",
             ]),
           )
           .prefault([]),

@@ -9,6 +9,7 @@ import { AuthCreditUsageChunk } from "./controllers/v1/types";
 import { ExtractorOptions, Document } from "./lib/entities";
 import { InternalOptions } from "./scraper/scrapeURL";
 import type { CostTracking } from "./lib/cost-tracking";
+import type { BillingMetadata } from "./services/billing/types";
 import { webhookSchema } from "./services/webhook/schema";
 import { SerializedTraceContext } from "./lib/otel-tracer";
 
@@ -16,9 +17,17 @@ type ScrapeJobCommon = {
   concurrencyLimited?: boolean;
   team_id: string;
   zeroDataRetention: boolean;
+  billing?: BillingMetadata;
+  keylessReserved?: boolean;
   traceContext?: SerializedTraceContext;
   skipNuq?: boolean;
   requestId?: string;
+  monitoring?: {
+    monitorId: string;
+    checkId: string;
+    targetId: string;
+    source: "explicit" | "discovered";
+  };
 };
 
 export type ScrapeJobData = ScrapeJobCommon &
@@ -54,6 +63,8 @@ type ScrapeJobSingleUrlsUnique = {
   sentry?: any;
   is_extract?: boolean;
   apiKeyId: number | null;
+
+  logRequestPromise?: Promise<any>;
 };
 
 export type ScrapeJobSingleUrls = ScrapeJobCommon & ScrapeJobSingleUrlsUnique;
@@ -143,12 +154,18 @@ export enum RateLimiterMode {
   ExtractAgentPreview = "extractAgentPreview",
   Browser = "browser",
   BrowserExecute = "browserExecute",
+  BrowserReplay = "browserReplay",
+  Account = "account",
+  SupportAsk = "supportAsk",
+  SupportDocsSearch = "supportDocsSearch",
+  Research = "research",
 }
 
 export type AuthResponse =
   | {
       success: true;
       team_id: string;
+      org_id?: string | null;
       api_key?: string;
       chunk: AuthCreditUsageChunk | null;
     }
@@ -156,11 +173,12 @@ export type AuthResponse =
       success: false;
       error: string;
       status: number;
+      // When true, send the agent OAuth-discovery WWW-Authenticate header even on
+      // non-401 responses (e.g. keyless cap 429s) so agents can find the key flow.
+      agentAuthDiscovery?: boolean;
     };
 
 export enum NotificationType {
-  APPROACHING_LIMIT = "approachingLimit",
-  LIMIT_REACHED = "limitReached",
   RATE_LIMIT_REACHED = "rateLimitReached",
   AUTO_RECHARGE_SUCCESS = "autoRechargeSuccess",
   AUTO_RECHARGE_FAILED = "autoRechargeFailed",

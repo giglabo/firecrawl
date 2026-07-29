@@ -13,26 +13,27 @@ import {
   updateBrowserSessionStatus,
   updateBrowserSessionCreditsUsed,
   claimBrowserSessionDestroyed,
-  getActiveBrowserSessionCount,
   invalidateActiveBrowserSessionCount,
-  MAX_ACTIVE_BROWSER_SESSIONS_PER_TEAM,
+  didBrowserSessionUsePrompt,
+  clearBrowserSessionPromptFlag,
 } from "../../lib/browser-sessions";
+import {
+  getCombinedTeamActiveCount,
+  mirrorExternalSlotAcquire,
+  mirrorExternalSlotRelease,
+} from "../../services/worker/nuq-router";
+import { getEffectiveConcurrencyLimit } from "../../lib/concurrency-limit";
 import { RequestWithAuth } from "./types";
 import { billTeam } from "../../services/billing/credit_billing";
 import { enqueueBrowserSessionActivity } from "../../lib/browser-session-activity";
 import { logRequest } from "../../services/logging/log_job";
 import { integrationSchema } from "../../utils/integration";
-
-const BROWSER_CREDITS_PER_HOUR = 120;
-
-/**
- * Calculate credits to bill for a browser session based on its duration.
- * Prorates to the millisecond. Minimum charge is 1 credit.
- */
-function calculateBrowserSessionCredits(durationMs: number): number {
-  const hours = durationMs / 3_600_000;
-  return Math.max(1, Math.ceil(hours * BROWSER_CREDITS_PER_HOUR));
-}
+import {
+  BROWSER_CREDITS_PER_HOUR,
+  INTERACT_CREDITS_PER_HOUR,
+  calculateBrowserSessionCredits,
+} from "../../lib/browser-billing";
+import { autumnService } from "../../services/autumn/autumn.service";
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -42,6 +43,7 @@ const browserCreateRequestSchema = z.object({
   ttl: z.number().min(30).max(3600).default(600),
   activityTtl: z.number().min(10).max(3600).default(300),
   streamWebView: z.boolean().default(true),
+  recordSession: z.boolean().default(true),
   integration: integrationSchema.optional().transform(val => val || null),
   profile: z
     .object({
@@ -212,7 +214,14 @@ export async function browserCreateController(
 
   req.body = browserCreateRequestSchema.parse(req.body);
 
-  const { ttl, activityTtl, streamWebView, profile, integration } = req.body;
+  const {
+    ttl,
+    activityTtl,
+    streamWebView,
+    recordSession,
+    profile,
+    integration,
+  } = req.body;
 
   if (!config.BROWSER_SERVICE_URL) {
     return res.status(503).json({
@@ -226,10 +235,19 @@ export async function browserCreateController(
 
   // 0a. Check if team has enough credits for the full TTL
   const estimatedCredits = calculateBrowserSessionCredits(ttl * 1000);
-  if (req.acuc && req.acuc.remaining_credits < estimatedCredits) {
+  const autumnResult = await autumnService.checkCredits({
+    teamId: req.auth.team_id,
+    value: estimatedCredits,
+    properties: {
+      source: "browserCreate",
+      path: req.path,
+      apiKeyId: req.acuc?.api_key_id ?? null,
+    },
+  });
+
+  if (autumnResult !== null && !autumnResult.allowed) {
     logger.warn("Insufficient credits for browser session TTL", {
       estimatedCredits,
-      remainingCredits: req.acuc.remaining_credits,
       ttl,
     });
     return res.status(402).json({
@@ -238,16 +256,20 @@ export async function browserCreateController(
     });
   }
 
-  // 0b. Enforce per-team active session limit
-  const activeCount = await getActiveBrowserSessionCount(req.auth.team_id);
-  if (activeCount >= MAX_ACTIVE_BROWSER_SESSIONS_PER_TEAM) {
-    logger.warn("Active browser session limit reached", {
+  // 0b. Enforce concurrency limit (shared pool with scrape/crawl/interact)
+  const concurrencyLimit = await getEffectiveConcurrencyLimit(
+    req.auth.team_id,
+    req.acuc?.org_id,
+  );
+  const activeCount = await getCombinedTeamActiveCount(req.auth.team_id);
+  if (activeCount >= concurrencyLimit) {
+    logger.warn("Concurrency limit reached for browser session", {
       activeCount,
-      limit: MAX_ACTIVE_BROWSER_SESSIONS_PER_TEAM,
+      limit: concurrencyLimit,
     });
     return res.status(429).json({
       success: false,
-      error: `You have reached the maximum number of active browser sessions (${MAX_ACTIVE_BROWSER_SESSIONS_PER_TEAM}). Please destroy existing sessions before creating new ones.`,
+      error: `You have reached the maximum number of concurrent jobs (${concurrencyLimit}). Please wait for existing jobs to complete or destroy browser sessions before creating new ones.`,
     });
   }
 
@@ -276,6 +298,7 @@ export async function browserCreateController(
         "/browsers",
         {
           ttl,
+          record: recordSession,
           ...(activityTtl !== undefined ? { activityTtl } : {}),
           ...(persistentStorage !== undefined ? { persistentStorage } : {}),
         },
@@ -363,6 +386,12 @@ export async function browserCreateController(
 
   // Invalidate cached count so next check reflects the new session
   invalidateActiveBrowserSessionCount(req.auth.team_id).catch(() => {});
+
+  // Register in the shared concurrency limiter so this session counts
+  // against the team's concurrent job limit while it's active.
+  mirrorExternalSlotAcquire(req.auth.team_id, sessionId, ttl * 1000).catch(
+    () => {},
+  );
 
   logger.info("Browser session created", {
     sessionId,
@@ -462,6 +491,7 @@ export async function browserExecuteController(
   enqueueBrowserSessionActivity({
     team_id: req.auth.team_id,
     session_id: id,
+    source: "browser",
     language,
     timeout,
     exit_code: execResult.exitCode ?? null,
@@ -539,6 +569,16 @@ export async function browserDeleteController(
 
   // Invalidate cached count so next check reflects the destroyed session
   invalidateActiveBrowserSessionCount(session.team_id).catch(() => {});
+  mirrorExternalSlotRelease(session.team_id, session.id).catch(error => {
+    logger.error(
+      "Failed to remove concurrency limiter entry for browser session",
+      {
+        error,
+        sessionId: session.id,
+        teamId: session.team_id,
+      },
+    );
+  });
 
   if (!claimed) {
     // The webhook (or another DELETE call) already transitioned and billed.
@@ -550,9 +590,19 @@ export async function browserDeleteController(
     });
   }
 
+  const wallClockMs = Date.now() - new Date(session.created_at).getTime();
   const durationMs =
-    sessionDurationMs ?? Date.now() - new Date(session.created_at).getTime();
-  const creditsBilled = calculateBrowserSessionCredits(durationMs);
+    sessionDurationMs && sessionDurationMs > 0
+      ? sessionDurationMs
+      : wallClockMs;
+
+  const usedPrompt = await didBrowserSessionUsePrompt(session.id);
+  const rate = usedPrompt
+    ? INTERACT_CREDITS_PER_HOUR
+    : BROWSER_CREDITS_PER_HOUR;
+  const creditsBilled = calculateBrowserSessionCredits(durationMs, rate);
+
+  clearBrowserSessionPromptFlag(session.id).catch(() => {});
 
   updateBrowserSessionCreditsUsed(session.id, creditsBilled).catch(error => {
     logger.error("Failed to update credits_used on browser session", {
@@ -562,12 +612,10 @@ export async function browserDeleteController(
     });
   });
 
-  billTeam(
-    req.auth.team_id,
-    req.acuc?.sub_id ?? undefined,
-    creditsBilled,
-    req.acuc?.api_key_id ?? null,
-  ).catch(error => {
+  billTeam(req.auth.team_id, creditsBilled, req.acuc?.api_key_id ?? null, {
+    endpoint: usedPrompt ? "interact" : "browser",
+    jobId: session.id,
+  }).catch(error => {
     logger.error("Failed to bill team for browser session", {
       error,
       creditsBilled,
@@ -620,8 +668,8 @@ export async function browserListController(
       id: r.id,
       status: r.status,
       cdpUrl: r.cdp_url,
-      liveViewUrl: r.cdp_path, // cdp_path stores the view URL
-      interactiveLiveViewUrl: r.cdp_interactive_path, // cdp_interactive_path stores the interactive view URL
+      liveViewUrl: r.cdp_path,
+      interactiveLiveViewUrl: r.cdp_interactive_path,
       streamWebView: r.stream_web_view,
       createdAt: r.created_at,
       lastActivity: r.updated_at,
@@ -665,6 +713,16 @@ export async function browserWebhookDestroyedController(
   const claimed = await claimBrowserSessionDestroyed(session.id);
 
   invalidateActiveBrowserSessionCount(session.team_id).catch(() => {});
+  mirrorExternalSlotRelease(session.team_id, session.id).catch(error => {
+    logger.error(
+      "Failed to remove concurrency limiter entry for browser session via webhook",
+      {
+        error,
+        sessionId: session.id,
+        teamId: session.team_id,
+      },
+    );
+  });
 
   if (!claimed) {
     logger.info("Session already destroyed by another path, skipping billing", {
@@ -675,7 +733,14 @@ export async function browserWebhookDestroyedController(
   }
 
   const durationMs = Date.now() - new Date(session.created_at).getTime();
-  const creditsBilled = calculateBrowserSessionCredits(durationMs);
+
+  const usedPrompt = await didBrowserSessionUsePrompt(session.id);
+  const rate = usedPrompt
+    ? INTERACT_CREDITS_PER_HOUR
+    : BROWSER_CREDITS_PER_HOUR;
+  const creditsBilled = calculateBrowserSessionCredits(durationMs, rate);
+
+  clearBrowserSessionPromptFlag(session.id).catch(() => {});
 
   updateBrowserSessionCreditsUsed(session.id, creditsBilled).catch(error => {
     logger.error(
@@ -690,9 +755,9 @@ export async function browserWebhookDestroyedController(
 
   billTeam(
     session.team_id,
-    undefined, // subscription_id — billTeam will look it up
     creditsBilled,
     null, // api_key_id not available in webhook context
+    { endpoint: usedPrompt ? "interact" : "browser", jobId: session.id },
   ).catch(error => {
     logger.error("Failed to bill team for browser session via webhook", {
       error,
@@ -708,6 +773,8 @@ export async function browserWebhookDestroyedController(
     browserId,
     durationMs,
     creditsBilled,
+    usedPrompt,
+    rate,
   });
 
   return res.status(200).json({ ok: true });

@@ -1,6 +1,6 @@
 Firecrawl is a web scraper API. The directory you have access to is a monorepo:
  - `apps/api` has the actual API and worker code
- - `apps/js-sdk`, `apps/python-sdk`, and `apps/rust-sdk` are various SDKs
+ - `apps/*-sdk` are various SDKs
 
 When making changes to the API, here are the general steps you should take:
 1. Write some end-to-end tests that assert your win conditions, if they don't already exist
@@ -79,10 +79,12 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
 
 7. **After merge, verify:**
    ```bash
-   node scripts/verify-fork-invariants.mjs          # 39 checks; must be 39/39
+   node scripts/verify-fork-invariants.mjs          # 46 checks; must be 46/46
    cd apps/api && npx tsc --noEmit
    cd apps/playwright-service-ts && npx tsc --noEmit
    pnpm harness jest -- --testPathPattern="scrape-dna|scrape-storage|scrape-waituntil|scrape-proxy|scrape-bytes-downloaded"
    ```
 
 **Use the `merge-upstream` skill** (`.claude/skills/merge-upstream/`) to perform a merge — it derives the current conflict surface rather than describing a fixed one, and `reference/file-playbook.md` holds the per-file rules and known traps. `MERGE-GUIDE.md` is a **historical plan that was never executed** and is ~950 upstream commits stale; do not follow it.
+
+Never bypass `knip` failures (e.g. with `git commit --no-verify`). If the pre-commit `knip` check fails, fix the reported unused exports/files — even if they predate your change — before committing.

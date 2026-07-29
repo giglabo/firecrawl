@@ -19,7 +19,7 @@ import {
 import { getJobs, PseudoJob } from "./crawl-status";
 import * as Sentry from "@sentry/node";
 import { getConcurrencyLimitedJobs } from "../../lib/concurrency-limit";
-import { scrapeQueue, NuQJobStatus } from "../../services/worker/nuq";
+import { scrapeQueue, NuQJobStatus } from "../../services/worker/nuq-router";
 import { getErrorContactMessage } from "../../lib/deployment";
 
 type ErrorMessage = {
@@ -182,9 +182,9 @@ export async function crawlStatusWSController(
       });
     }
 
-    const { team_id } = auth;
+    const { team_id, org_id } = auth;
 
-    req.auth = { team_id };
+    req.auth = { team_id, org_id };
 
     await crawlStatusWS(ws, req);
   } catch (err) {

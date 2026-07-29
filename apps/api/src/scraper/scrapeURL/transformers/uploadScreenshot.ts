@@ -89,7 +89,11 @@ async function uploadSingleScreenshot(
 ): Promise<UploadResult> {
   let contentType = dataUri.split(":")[1].split(";")[0];
   const base64Data = dataUri.split(",")[1];
-  let buffer = Buffer.from(base64Data, "base64");
+  // Annotate as the wide `Buffer` type: @types/node >=22 makes `Buffer`
+  // generic, so `Buffer.from` infers `Buffer<ArrayBuffer>` while
+  // `convertImageToWebp` returns `Buffer<ArrayBufferLike>` -- the reassignment
+  // below only type-checks when this variable is the wider type.
+  let buffer: Buffer = Buffer.from(base64Data, "base64");
   let ext = contentType.split("/")[1] || "png";
 
   if (format === "webp") {

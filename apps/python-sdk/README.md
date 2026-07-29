@@ -1,6 +1,6 @@
 # Firecrawl Python SDK
 
-The Firecrawl Python SDK is a library that allows you to easily scrape and crawl websites, and output the data in a format ready for use with language models (LLMs). It provides a simple and intuitive interface for interacting with the Firecrawl API.
+The Firecrawl Python SDK is a library that lets you easily search, scrape, and interact with the web for AI agents — returning clean Markdown or structured data your agents can ship with. It provides a simple and intuitive interface for the Firecrawl API.
 
 ## Installation
 
@@ -47,6 +47,54 @@ To scrape a single URL, use the `scrape` method. It takes the URL as a parameter
 # Scrape a website (v2):
 scrape_result = firecrawl.scrape('https://firecrawl.dev', formats=['markdown', 'html'])
 print(scrape_result)
+```
+
+### Video extraction
+
+Use the `video` format on supported video URLs, including YouTube and TikTok. The returned `video` field is a signed URL to the extracted video file.
+
+```python
+doc = firecrawl.scrape('https://www.youtube.com/watch?v=dQw4w9WgXcQ', formats=['video'])
+print(doc.video)
+```
+
+### Product extraction
+
+Use the `product` format on product pages to deterministically pull structured product data (title, price, availability, variants). It is the deterministic counterpart to the LLM-based `json` format.
+
+```python
+doc = firecrawl.scrape('https://firecrawl.dev', formats=['product'])
+print(doc.product)
+```
+
+### Menu extraction
+
+Use the `menu` format on menu pages to deterministically pull structured menu data (merchant, sections, items, prices, availability). It is the deterministic counterpart to the LLM-based `json` format.
+
+```python
+doc = firecrawl.scrape('https://example.com/restaurant/menu', formats=['menu'])
+print(doc.menu)
+```
+
+### Parsing uploaded files
+
+Use `parse` to upload local bytes/files (`html`, `pdf`, `docx`, etc.) as multipart form data and return the parsed document.
+`parse` does not support change tracking or browser-only options (actions, wait_for, location, mobile, screenshot, branding, audio, video).
+
+```python
+from firecrawl import Firecrawl
+from firecrawl.v2.types import ParseOptions
+
+firecrawl = Firecrawl(api_key="fc-YOUR_API_KEY")
+
+doc = firecrawl.parse(
+  b"<!DOCTYPE html><html><body><h1>Python Parse</h1></body></html>",
+  filename="upload.html",
+  content_type="text/html",
+  options=ParseOptions(formats=["markdown"]),
+)
+
+print(doc.markdown)
 ```
 
 ### Crawling a Website
@@ -132,6 +180,31 @@ map_result = firecrawl.map('https://firecrawl.dev')
 print(map_result)
 ```
 
+### Scrape-bound interactive browsing (v2)
+
+Use a scrape job ID to keep interacting with the replayed browser context:
+
+```python
+doc = firecrawl.scrape(
+  "https://example.com",
+  actions=[{"type": "click", "selector": "a[href='/pricing']"}],
+)
+
+scrape_job_id = doc.metadata_typed.scrape_id
+if not scrape_job_id:
+  raise RuntimeError("Missing scrape job id")
+
+run = firecrawl.interact(
+  scrape_job_id,
+  code="print(await page.url())",
+  language="python",
+  timeout=60,
+)
+print(run.stdout)
+
+firecrawl.stop_interaction(scrape_job_id)
+```
+
 {/* ### Extracting Structured Data from Websites
 
   To extract structured data from websites, use the `extract` method. It takes the URLs to extract data from, a prompt, and a schema as arguments. The schema is a Pydantic model that defines the structure of the extracted data.
@@ -190,6 +263,15 @@ firecrawl = AsyncFirecrawl(api_key="YOUR_API_KEY")
 async def example_scrape():
   scrape_result = await firecrawl.scrape(url="https://example.com")
   print(scrape_result)
+
+# Async Parse (v2)
+async def example_parse():
+  parse_result = await firecrawl.parse(
+    b"<!DOCTYPE html><html><body><h1>Async Parse</h1></body></html>",
+    filename="upload.html",
+    content_type="text/html",
+  )
+  print(parse_result)
 
 # Async Crawl (v2)
 async def example_crawl():

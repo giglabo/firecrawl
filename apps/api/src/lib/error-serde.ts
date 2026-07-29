@@ -2,6 +2,7 @@ import {
   ActionsNotSupportedError,
   CrawlDenialError,
   ErrorCodes,
+  MapFailedError,
   MapTimeoutError,
   RacedRedirectError,
   ScrapeJobTimeoutError,
@@ -24,14 +25,23 @@ import {
   SiteError,
   SSLError,
   ProxySelectionError,
+  AgentIndexOnlyError,
   NoCachedDataError,
+  LockdownMissError,
   ScrapeJobCancelledError,
   ScrapeRetryLimitError,
   BrandingNotSupportedError,
+  AudioUnsupportedUrlError,
+  VideoUnsupportedUrlError,
+  MediaAccessDeniedError,
+  XTwitterConfigurationError,
 } from "../scraper/scrapeURL/error";
+import { UnsafeDomainBlockedError } from "./threat-protection/error";
 
 // TODO: figure out correct typing for this
 const errorMap: Record<ErrorCodes, any> = {
+  // Terms responses are API-level, never transported through workers.
+  THIRD_PARTY_DATA_TERMS_REQUIRED: null,
   SCRAPE_TIMEOUT: ScrapeJobTimeoutError,
   MAP_TIMEOUT: MapTimeoutError,
   UNKNOWN_ERROR: UnknownError,
@@ -51,16 +61,25 @@ const errorMap: Record<ErrorCodes, any> = {
   SCRAPE_DOCUMENT_ANTIBOT_ERROR: DocumentAntibotError,
   SCRAPE_UNSUPPORTED_FILE_ERROR: UnsupportedFileError,
   SCRAPE_NO_CACHED_DATA: NoCachedDataError,
+  SCRAPE_LOCKDOWN_CACHE_MISS: LockdownMissError,
   SCRAPE_ACTION_ERROR: ActionError,
   SCRAPE_ACTIONS_NOT_SUPPORTED: ActionsNotSupportedError,
   SCRAPE_BRANDING_NOT_SUPPORTED: BrandingNotSupportedError,
+  AGENT_INDEX_ONLY: AgentIndexOnlyError,
   SCRAPE_RACED_REDIRECT_ERROR: RacedRedirectError,
   SCRAPE_SITEMAP_ERROR: SitemapError,
   CRAWL_DENIAL: CrawlDenialError,
+  SCRAPE_AUDIO_UNSUPPORTED_URL: AudioUnsupportedUrlError,
+  SCRAPE_VIDEO_UNSUPPORTED_URL: VideoUnsupportedUrlError,
+  SCRAPE_MEDIA_ACCESS_DENIED: MediaAccessDeniedError,
+  SCRAPE_X_TWITTER_CONFIGURATION_ERROR: XTwitterConfigurationError,
+  MAP_FAILED: MapFailedError,
+  unsafe_domain_blocked: UnsafeDomainBlockedError,
 
   // Zod errors
   BAD_REQUEST: null,
   BAD_REQUEST_INVALID_JSON: null,
+  PARSE_UNSUPPORTED_OPTIONS: null,
 };
 
 export function serializeTransportableError(error: TransportableError) {

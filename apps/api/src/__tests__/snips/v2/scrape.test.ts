@@ -27,8 +27,10 @@ import {
 } from "./lib";
 import request from "./lib";
 import crypto from "crypto";
+import { z } from "zod";
 
 const CHANGE_TRACKING_TEST_URL = `${TEST_SUITE_WEBSITE}?testId=${crypto.randomUUID()}`;
+const stringbool = z.stringbool().catch(false);
 
 let identity: Identity;
 
@@ -52,6 +54,20 @@ beforeAll(async () => {
 
 describe("Scrape tests", () => {
   const base = TEST_SUITE_WEBSITE;
+  const playwrightAllowsLocalTargets = stringbool.parse(
+    process.env.ALLOW_LOCAL_WEBHOOKS,
+  );
+  const createSelfHostedLocalUrl = () => {
+    const target = new URL(TEST_SUITE_WEBSITE);
+    target.searchParams.set("testId", crypto.randomUUID());
+    return target.toString();
+  };
+
+  const createDnsResolvedLocalUrl = () => {
+    const target = new URL(createSelfHostedLocalUrl());
+    target.hostname = "localtest.me";
+    return target.toString();
+  };
 
   concurrentIf(ALLOW_TEST_SUITE_WEBSITE)(
     "works",
@@ -279,6 +295,50 @@ describe("Scrape tests", () => {
     scrapeTimeout,
   );
 
+  concurrentIf(
+    TEST_SELF_HOST &&
+      HAS_PLAYWRIGHT &&
+      ALLOW_TEST_SUITE_WEBSITE &&
+      playwrightAllowsLocalTargets,
+  )(
+    "playwright allows local-network targets when ALLOW_LOCAL_WEBHOOKS is enabled",
+    async () => {
+      const response = await scrape(
+        {
+          url: createSelfHostedLocalUrl(),
+          waitFor: 100,
+        },
+        identity,
+      );
+
+      expect(response.markdown).toContain("Firecrawl");
+    },
+    scrapeTimeout,
+  );
+
+  concurrentIf(
+    TEST_SELF_HOST && HAS_PLAYWRIGHT && !playwrightAllowsLocalTargets,
+  )(
+    "playwright blocks local-network targets resolved via DNS",
+    async () => {
+      const raw = await scrapeRaw(
+        {
+          url: createDnsResolvedLocalUrl(),
+          waitFor: 100,
+        },
+        identity,
+      );
+
+      expect(raw.statusCode).toBe(200);
+      expect(raw.body.success).toBe(true);
+      expect(raw.body.data?.metadata?.statusCode).toBe(403);
+      expect(raw.body.data?.metadata?.error).toContain(
+        "Blocked insecure target URL",
+      );
+    },
+    scrapeTimeout,
+  );
+
   concurrentIf(TEST_PRODUCTION || (HAS_PLAYWRIGHT && ALLOW_TEST_SUITE_WEBSITE))(
     "waitFor works",
     async () => {
@@ -315,6 +375,23 @@ describe("Scrape tests", () => {
       expect(raw.body.success).toBe(false);
       expect(raw.body.code).toBe("SCRAPE_ACTIONS_NOT_SUPPORTED");
       expect(raw.body.error).toContain("Actions are not supported");
+    },
+    scrapeTimeout,
+  );
+
+  itIf(TEST_SELF_HOST && !HAS_FIRE_ENGINE && ALLOW_TEST_SUITE_WEBSITE)(
+    "does not reject empty actions array without fire-engine",
+    async () => {
+      const raw = await scrapeRaw(
+        {
+          url: base,
+          actions: [],
+        },
+        identity,
+      );
+
+      expect(raw.statusCode).toBe(200);
+      expect(raw.body.success).toBe(true);
     },
     scrapeTimeout,
   );
@@ -636,6 +713,28 @@ describe("Scrape tests", () => {
           expect(response.metadata.cacheState).toBe("miss");
         },
         scrapeTimeout * 2 + 1 * indexCooldown,
+      );
+
+      // Gated to the playwright engine (where cookies are seeded into the jar);
+      // a Cookie passed as an extra request header is dropped on redirect hops.
+      concurrentIf(HAS_PLAYWRIGHT && !HAS_FIRE_ENGINE)(
+        "forwards cookies across redirects",
+        async () => {
+          // httpbin's /cookies echoes the cookies it received. The cookie only
+          // survives the 302 hop if it was seeded into the browser cookie jar.
+          const response = await scrape(
+            {
+              url: "https://httpbin.org/redirect-to?url=https%3A%2F%2Fhttpbin.org%2Fcookies&status_code=302",
+              headers: { Cookie: "fc_cookie_redirect_test=1" },
+              formats: ["rawHtml"],
+              waitFor: 1000,
+            },
+            identity,
+          );
+
+          expect(response.rawHtml).toContain("fc_cookie_redirect_test");
+        },
+        scrapeTimeout,
       );
 
       it.concurrent(
@@ -1126,7 +1225,7 @@ describe("Scrape tests", () => {
             identity,
           );
 
-          expect(response.markdown).toContain("| Country | United States |");
+          expect(response.markdown).toContain("| Country | United States "); // either United States or United States of America
         },
         scrapeTimeout,
       );
@@ -1245,6 +1344,55 @@ describe("Scrape tests", () => {
         scrapeTimeout * 2,
       );
 
+      // Regression: an explicit stealth/enhanced proxy must still use stealth
+      // even when another feature flag (e.g. actions) is requested. The engine
+      // picker used to drop the negative-quality stealth engines via the quality
+      // filter, so a request with a non-stealth flag would silently fall back to
+      // a basic proxy.
+      it.concurrent(
+        "enhanced uses stealth alongside other feature flags",
+        async () => {
+          const res = await scrape(
+            {
+              url: base,
+              proxy: "enhanced",
+              actions: [
+                {
+                  type: "wait",
+                  milliseconds: 500,
+                },
+              ],
+            },
+            identity,
+          );
+
+          expect(res.metadata.proxyUsed).toBe("stealth");
+        },
+        scrapeTimeout * 2,
+      );
+
+      it.concurrent(
+        "stealth uses stealth alongside other feature flags",
+        async () => {
+          const res = await scrape(
+            {
+              url: base,
+              proxy: "stealth",
+              actions: [
+                {
+                  type: "wait",
+                  milliseconds: 500,
+                },
+              ],
+            },
+            identity,
+          );
+
+          expect(res.metadata.proxyUsed).toBe("stealth");
+        },
+        scrapeTimeout * 2,
+      );
+
       // TODO: flaky
       // it.concurrent("auto works properly on 'stealth' site (faked for reliabile testing)", async () => {
       //   const res = await scrape({
@@ -1269,7 +1417,7 @@ describe("Scrape tests", () => {
           );
 
           expect(response.markdown).toContain("PDF Test File");
-          expect(response.metadata.title).toBe("PDF Test Page");
+          expect(response.metadata.title).toContain("PDF Test Page");
           expect(response.metadata.numPages).toBe(1);
         },
         scrapeTimeout,
@@ -1296,7 +1444,9 @@ describe("Scrape tests", () => {
             identity,
           );
 
-          expect(response.error).toContain("Insufficient time to process PDF");
+          expect(response.error).toContain(
+            "pages, which requires more processing time than your current timeout allows.",
+          );
         },
         12000,
       );
@@ -1947,6 +2097,78 @@ describe("Attribute formats", () => {
         );
 
         expect(response.statusCode).toBe(200);
+      },
+      scrapeTimeout,
+    );
+  });
+
+  describeIf(!TEST_SELF_HOST)("Audio format", () => {
+    it.concurrent(
+      "should return audio field with signed GCS URL for a supported video URL",
+      async () => {
+        const data = await scrape(
+          {
+            url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            formats: ["audio"],
+          },
+          identity,
+        );
+
+        expect(data.audio).toBeDefined();
+        expect(typeof data.audio).toBe("string");
+        expect(data.audio).toMatch(/^https:\/\//);
+      },
+      scrapeTimeout,
+    );
+
+    it.concurrent(
+      "should reject unsupported URL with audio format",
+      async () => {
+        const result = await scrapeWithFailure(
+          {
+            url: "https://example.com",
+            formats: ["audio"],
+          },
+          identity,
+        );
+
+        expect(result.error).toMatch(/audio/i);
+      },
+      scrapeTimeout,
+    );
+  });
+
+  describeIf(!TEST_SELF_HOST)("Video format", () => {
+    it.concurrent(
+      "should return video field with signed GCS URL for a supported video URL",
+      async () => {
+        const data = await scrape(
+          {
+            url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            formats: ["video"],
+          },
+          identity,
+        );
+
+        expect(data.video).toBeDefined();
+        expect(typeof data.video).toBe("string");
+        expect(data.video).toMatch(/^https:\/\//);
+      },
+      scrapeTimeout * 2,
+    );
+
+    it.concurrent(
+      "should reject unsupported URL with video format",
+      async () => {
+        const result = await scrapeWithFailure(
+          {
+            url: "https://example.com",
+            formats: ["video"],
+          },
+          identity,
+        );
+
+        expect(result.error).toMatch(/video/i);
       },
       scrapeTimeout,
     );

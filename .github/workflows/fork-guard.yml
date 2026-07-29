@@ -56,6 +56,8 @@ jobs:
 
       # Behavioural checks: catches a schema that still exists but no longer
       # parses our options -- the one class of damage the static checks can't see.
+      # Upstream migrated the test runner from jest to vitest (globals: true in
+      # vitest.config.ts), so the test source is unchanged but the runner is not.
       - name: Run fork contract tests
-        run: ./node_modules/.bin/jest src/__tests__/fork-contract.test.ts
+        run: ./node_modules/.bin/vitest run src/__tests__/fork-contract.test.ts
         working-directory: apps/api
