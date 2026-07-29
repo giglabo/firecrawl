@@ -1,6 +1,12 @@
 name: Build Custom Images
 
+# Never builds on a plain branch push. Three entry points, by intent:
+#   pull_request      -> validate only (amd64, `load` not `push`, no manifest)
+#   push tags v*      -> publish :latest and :<version> to GHCR
+#   workflow_dispatch -> manual publish / force a full rebuild
 on:
+  pull_request:
+    branches: [main]
   push:
     tags: ["v*"]
   workflow_dispatch:
@@ -22,10 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Force all on tag push or manual override
+      - name: Force all on tag push or manual dispatch
         id: force
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ inputs.force_all }}" == "true" ]]; then
+          if [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || [[ "${{ inputs.force_all }}" == "true" ]]; then
             echo "force=true" >> $GITHUB_OUTPUT
           else
             echo "force=false" >> $GITHUB_OUTPUT
