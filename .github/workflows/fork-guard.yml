@@ -1,0 +1,61 @@
+# Protects this fork's custom layer (DNA extraction, scroll screenshots,
+# pluggable screenshot storage, the standalone-playwright scrape path,
+# configurable waitUntil, per-request proxy, byte tracking) from being silently
+# dropped by an upstream merge.
+#
+# Deliberately needs no secrets and no services, so unlike `Server Test Suite`
+# it can actually run on every PR in this fork.
+name: Fork Guard
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  invariants:
+    name: Fork invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # Static checks: catches features deleted, renamed, dropped from a list, or
+      # reordered out of position. No dependencies, runs in milliseconds.
+      - name: Verify fork invariants
+        run: node scripts/verify-fork-invariants.mjs
+
+  contract:
+    name: Fork contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/api/pnpm-lock.yaml
+
+      # --ignore-scripts skips the native (napi) build; the contract tests only
+      # touch zod schemas and the storage factory, so they don't need it.
+      - name: Install API dependencies
+        run: pnpm install --ignore-scripts
+        working-directory: apps/api
+
+      # Behavioural checks: catches a schema that still exists but no longer
+      # parses our options -- the one class of damage the static checks can't see.
+      - name: Run fork contract tests
+        run: ./node_modules/.bin/jest src/__tests__/fork-contract.test.ts
+        working-directory: apps/api

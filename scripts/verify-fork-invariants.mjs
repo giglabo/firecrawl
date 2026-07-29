@@ -384,6 +384,39 @@ check(
 
 check(
   "transformers",
+  "transformer-stack-order",
+  "uploadScreenshot runs before anything that strips or prunes it",
+  () => {
+    const rel = `${API}/scraper/scrapeURL/transformers/index.ts`;
+    const src = read(rel);
+    if (src === null) return `missing file: ${rel}`;
+    const stack = src.match(/const transformerStack: Transformer\[\] = \[([\s\S]*?)\n\];/);
+    if (!stack) return "could not locate transformerStack";
+    const at = name => stack[1].indexOf(name);
+    const upload = at("uploadScreenshot");
+    if (upload < 0) return "uploadScreenshot is not in transformerStack";
+    // Both of these destroy the data uploadScreenshot needs:
+    // removeBase64Images strips the data: URIs it uploads from, and
+    // coerceFieldsToFormats prunes screenshots that aren't in formats.
+    // Upstream orders its stack differently, so a merge can float these above us
+    // while every "is it present?" check still passes.
+    const after = [
+      ["removeBase64Images", "strips the data: URIs before they are uploaded"],
+      ["coerceFieldsToFormats", "prunes screenshots before they are uploaded"],
+    ].filter(([n]) => {
+      const i = at(n);
+      return i >= 0 && i < upload;
+    });
+    return after.length === 0
+      ? true
+      : `transformerStack order is wrong -- ${after
+          .map(([n, why]) => `${n} runs before uploadScreenshot and ${why}`)
+          .join("; ")}`;
+  },
+);
+
+check(
+  "transformers",
   "coerce-fields-handles-ours",
   "coerceFieldsToFormats prunes/validates screenshots + dna",
   mustContain(`${API}/scraper/scrapeURL/transformers/index.ts`, [
