@@ -169,16 +169,13 @@ jobs:
           PORT: 3003
 
       # `pnpm harness` boots the API + workers, then runs the wrapped command.
-      # Only our five fork snips; each is self-gated on TEST_SUITE_SELF_HOSTED
-      # && a reachable playwright microservice.
+      # The command MUST be `pnpm test:snips*` -- harness.ts only gates the command
+      # on API readiness when command[1] startsWith "test:snips" (otherwise vitest
+      # races the API boot and every request is ECONNREFUSED). `test:snips:fork`
+      # runs only our five snips; each self-gates on TEST_SUITE_SELF_HOSTED and a
+      # reachable playwright microservice.
       - name: Run fork snips
-        run: |
-          pnpm harness pnpm exec vitest run \
-            src/__tests__/snips/v2/scrape-dna.test.ts \
-            src/__tests__/snips/v2/scrape-storage.test.ts \
-            src/__tests__/snips/v2/scrape-waituntil.test.ts \
-            src/__tests__/snips/v2/scrape-proxy.test.ts \
-            src/__tests__/snips/v2/scrape-bytes-downloaded.test.ts
+        run: pnpm harness pnpm test:snips:fork
         working-directory: apps/api
         env:
           npm_config_ignore_scripts: "true"

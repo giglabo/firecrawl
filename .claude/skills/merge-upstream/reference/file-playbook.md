@@ -255,3 +255,15 @@ It is the only gate that exercises our features at *runtime*; keep it green.
 `idmux` falls back to a test identity when `IDMUX_URL` is unset, and the snips
 scrape a local test-site, so no secrets are required. MinIO (a service in the
 workflow) backs the `scrape-storage` snip.
+
+Two non-obvious traps in that workflow, both cost a CI round:
+- **`pnpm/action-setup` needs an explicit `version:`** — the repo has no root
+  `package.json` with a `packageManager` field, so auto-detection fails with
+  "No pnpm version is specified". Pin `11.4.0` (matches `apps/api`).
+- **The harness only waits for the API when the command is `pnpm test:snips*`.**
+  `harness.ts` gates on `command[0] === "pnpm" && command[1].startsWith("test:snips")`.
+  Anything else (e.g. `pnpm exec vitest run …`) races the API boot and every
+  request is `ECONNREFUSED`. Hence the dedicated `test:snips:fork` script in
+  `apps/api/package.json` — keep it, and invoke it as `pnpm harness pnpm test:snips:fork`.
+- `bitnami/minio:latest` was pulled from Docker Hub; use `minio/minio` + `minio/mc`
+  to create the bucket.
