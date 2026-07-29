@@ -15,6 +15,9 @@ useDefault = true
     '''node_modules/''',
     '''pnpm-lock\.yaml''',
     '''apps/api/pnpm-lock\.yaml''',
+    # Self-signed key/cert fixtures baked into the skipTlsVerification snip --
+    # throwaway test material, not a real secret.
+    '''apps/api/src/__tests__/snips/v2/scrape-skip-tls\.test\.ts''',
   ]
 
   regexTarget = "match"
