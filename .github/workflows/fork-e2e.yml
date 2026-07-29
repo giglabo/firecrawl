@@ -139,12 +139,23 @@ jobs:
 
       - name: Run MinIO (screenshot storage target)
         run: |
+          # Official MinIO image; bitnami/minio:latest was removed from Docker Hub.
+          # minio/minio does not auto-create buckets, so make it with minio/mc.
           docker run -d -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            -e MINIO_DEFAULT_BUCKETS=screenshots \
-            --name minio bitnami/minio:latest
+            --name minio minio/minio:latest server /data
           pnpx wait-on tcp:9000 -t 30s
+          ok=0
+          for i in $(seq 1 15); do
+            if docker run --rm --network host \
+                 -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
+                 minio/mc:latest mb --ignore-existing local/screenshots; then
+              ok=1; break
+            fi
+            echo "minio not ready, retry $i"; sleep 2
+          done
+          [ "$ok" = 1 ]
 
       - name: Generate parse upload ref secret
         run: echo "PARSE_UPLOAD_REF_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
