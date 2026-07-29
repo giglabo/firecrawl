@@ -193,6 +193,45 @@ check(
   ]),
 );
 
+check(
+  "engines",
+  "scrapeurl-flag-and-propagation",
+  "scrapeURL raises the `dna` flag and propagates screenshots/bytes",
+  () => {
+    const rel = `${API}/scraper/scrapeURL/index.ts`;
+    const src = read(rel);
+    if (src === null) return `missing file: ${rel}`;
+    const missing = [
+      ['`dna` feature flag', /hasFormatOfType\(options\.formats, "dna"\)[\s\S]{0,60}flags\.add\("dna"\)/],
+      ["screenshots propagation", /screenshots: engineResult\.screenshots/],
+      ["bytesDownloaded propagation", /engineResult\.bytesDownloaded/],
+    ].filter(([, re]) => !re.test(src));
+    return missing.length === 0
+      ? true
+      : `${rel} lost: ${missing.map(([n]) => n).join(", ")} -- without the flag ` +
+          `no engine advertises dna support and every dna request falls through`;
+  },
+);
+
+check(
+  "engines",
+  "chrome-cdp-dna-actions",
+  "chrome-cdp injects the DNA script (with its lazy-load scroll)",
+  () => {
+    const rel = `${ENGINES}/fire-engine/index.ts`;
+    const src = read(rel);
+    if (src === null) return `missing file: ${rel}`;
+    const missing = [
+      ["getDnaScript import", 'from "./dnaScript"'],
+      ["dna format lookup", 'hasFormatOfType(meta.options.formats, "dna")'],
+      ["getDnaScript call", "getDnaScript({"],
+    ].filter(([, n]) => !src.includes(n));
+    return missing.length === 0
+      ? true
+      : `${rel} lost: ${missing.map(([n]) => n).join(", ")}`;
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Group: formats -- request/response schema surface
 // ---------------------------------------------------------------------------
@@ -305,6 +344,13 @@ for (const v of ["v1", "v2"]) {
 
 check(
   "formats",
+  "v1-document-screenshots",
+  "v1 Document exposes screenshots[]",
+  mustContain(`${API}/controllers/v1/types.ts`, ["screenshots?: string[]"]),
+);
+
+check(
+  "formats",
   "track-bytes-downloaded",
   "`trackBytesDownloaded` opt-in survives",
   mustContain(`${API}/controllers/v2/types.ts`, ["trackBytesDownloaded"]),
@@ -391,6 +437,25 @@ check(
 
 check(
   "storage",
+  "batched-uploads-and-select",
+  "batched uploads, screenshot selection and returned paths survive",
+  () => {
+    const rel = `${API}/scraper/scrapeURL/transformers/uploadScreenshot.ts`;
+    const src = read(rel);
+    if (src === null) return `missing file: ${rel}`;
+    const missing = [
+      ["upload concurrency", "SCREENSHOT_UPLOAD_CONCURRENCY"],
+      ["screenshot select parsing", "parseScreenshotSelect"],
+      ["screenshotPaths response", "document.screenshotPaths"],
+    ].filter(([, n]) => !src.includes(n));
+    return missing.length === 0
+      ? true
+      : `${rel} lost: ${missing.map(([n]) => n).join(", ")}`;
+  },
+);
+
+check(
+  "storage",
   "config-env-vars",
   "storage/branding/DNA/proxy env vars are declared in config",
   mustContain(`${API}/config.ts`, [
@@ -443,6 +508,39 @@ check(
     return missing.length === 0
       ? true
       : `brandingScript lost override layer(s): ${missing.map(([n]) => n).join(", ")}`;
+  },
+);
+
+check(
+  "scripts",
+  "branding-skip-llm",
+  "BRANDING_SKIP_LLM heuristic-only path survives",
+  () => {
+    const rel = `${API}/lib/branding/transformer.ts`;
+    const src = read(rel);
+    if (src === null) return `missing file: ${rel}`;
+    // Self-hosted collects raw branding data with no LLM calls; upstream always
+    // enhances via LLM. Losing this makes self-hosted branding require an API key.
+    return src.includes("config.BRANDING_SKIP_LLM")
+      ? true
+      : `${rel} lost the BRANDING_SKIP_LLM branch -- self-hosted branding would ` +
+          `start requiring an LLM provider`;
+  },
+);
+
+check(
+  "scripts",
+  "extract-worker-optional-rabbitmq",
+  "extract worker stays alive without NUQ_RABBITMQ_URL",
+  () => {
+    const rel = `${API}/services/extract-worker.ts`;
+    const src = read(rel);
+    if (src === null) return `missing file: ${rel}`;
+    // Without this the harness treats the worker as crashed in self-hosted setups.
+    return src.includes("NUQ_RABBITMQ_URL")
+      ? true
+      : `${rel} lost the NUQ_RABBITMQ_URL guard -- the test harness reads the ` +
+          `worker exit as a crash`;
   },
 );
 
