@@ -1,5 +1,16 @@
 # Merge Guide: Upstream → feat/self-hosted-branding
 
+> **HISTORICAL — DO NOT FOLLOW.** This document is a plan for a ~35-commit merge
+> that was **never executed**: the fork point is still `565fc955c`. Upstream has
+> moved ~950 commits past the state described below, so most of the specifics here
+> are wrong (upstream has since deleted `transformers/uploadScreenshot.ts` and the
+> Supabase SDK, centralized `config.ts`, and added several engines).
+>
+> For merging upstream, use the **`merge-upstream` skill**
+> (`.claude/skills/merge-upstream/SKILL.md`) and gate on
+> `node scripts/verify-fork-invariants.mjs`. Kept only for the reasoning it
+> records about our divergence.
+
 ## Overview
 
 - **Fork point**: `565fc955c`

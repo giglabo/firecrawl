@@ -75,13 +75,14 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
    - If upstream changes `createContext` signature, adapt ours to match while preserving our `blockMedia` and `deviceName` parameters
    - Keep the `wait_until` parameter in the request interface and the `scrapePage` call — upstream hardcodes `'load'`, we make it configurable
 
-6. **`uploadScreenshot.ts` — keep our async pluggable storage.** If upstream changes the upload logic, adapt but preserve the provider resolution chain: per-request config → env config → Supabase → data URI fallback.
+6. **`uploadScreenshot.ts` — keep our async pluggable storage.** Upstream deleted this file, so it conflicts as `UD`: resolve with `--ours`, then re-add its import and `transformerStack` entry in `transformers/index.ts`. Preserve the provider resolution chain: per-request config → env config → data URI fallback. (The old Supabase step is gone — upstream deleted both `services/supabase.ts` and the `@supabase/supabase-js` dependency.)
 
 7. **After merge, verify:**
    ```bash
+   node scripts/verify-fork-invariants.mjs          # 39 checks; must be 39/39
    cd apps/api && npx tsc --noEmit
    cd apps/playwright-service-ts && npx tsc --noEmit
-   pnpm harness jest -- --testPathPattern="scrape-dna|scrape-storage|scrape-waituntil|scrape-proxy"
+   pnpm harness jest -- --testPathPattern="scrape-dna|scrape-storage|scrape-waituntil|scrape-proxy|scrape-bytes-downloaded"
    ```
 
-See `MERGE-GUIDE.md` for a detailed walkthrough of the last merge (upstream as of 2026-03-14).
+**Use the `merge-upstream` skill** (`.claude/skills/merge-upstream/`) to perform a merge — it derives the current conflict surface rather than describing a fixed one, and `reference/file-playbook.md` holds the per-file rules and known traps. `MERGE-GUIDE.md` is a **historical plan that was never executed** and is ~950 upstream commits stale; do not follow it.
