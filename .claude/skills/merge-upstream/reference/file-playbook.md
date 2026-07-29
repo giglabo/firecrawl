@@ -197,3 +197,61 @@ for `image_converter.rs` (`convertImageToWebp`, used by screenshot WebP output);
 
 See `SKILL.md` Phase 2 bucket D. Regenerate the lockfile; never resolve its hunks
 by hand.
+
+---
+
+## Traps confirmed in the v2.11.153 merge (952 commits, 2026-07)
+
+Each of these cost a debugging round; check them explicitly next time.
+
+1. **Test runner: jest → vitest.** Upstream deleted jest entirely and moved to
+   vitest (`vitest.config.ts`, `globals: true`, `include: ["src/**/*.test.ts"]`).
+   Our test *sources* need no change (globals cover `describe`/`it`/`expect`),
+   but anything that *invokes* jest breaks: `.github/workflows/fork-guard.yml`
+   (`jest` → `vitest run <file>`) and the snips harness command
+   (`pnpm harness pnpm exec vitest run …`). This is invisible until `jest` is
+   physically gone from `node_modules/.bin`.
+
+2. **New engines without `dna`.** This merge added `x-twitter`, `exchange`,
+   `wikipedia` — all non-JS content engines, all needing `dna: false`. The
+   verifier's `dna-on-every-engine` check catches them; `tsc` also catches them
+   via the mapped type. Note `x-twitter` is a *quoted* key (hyphen), the others
+   are bare identifiers — grep both.
+
+3. **Native tsc false-positives until you build.** Right after the merge, `tsc`
+   in `apps/api` reports dozens of `Cannot find module '@mendable/firecrawl-rs'`
+   plus signature errors (`robotsUserAgent`, `PdfProcessResult.logs`, arg counts)
+   in *upstream* files. These are **not** merge defects — the checked-in napi
+   `.d.ts` is pre-merge. `cd apps/api/native && pnpm install` rebuilds it from the
+   merged Rust source and they all clear. Don't "fix" upstream files chasing them.
+
+4. **`@types/node` >= 22 Buffer generics.** The dep bump makes `Buffer` generic,
+   so `Buffer.from(...)` infers `Buffer<ArrayBuffer>` while napi returns
+   `Buffer<ArrayBufferLike>`. `uploadScreenshot.ts` reassigns one to the other —
+   annotate the variable `let buffer: Buffer = …` to widen it. Our-file fix, real
+   error, only surfaces once the merged lockfile is installed.
+
+5. **`api.ts` createContext/scrapePage shape change.** Upstream changed
+   `createContext` to return `{ context, securityState }` (was just the context)
+   and added a `userAgentOverride` param + a local SSRF proxy
+   (`http://127.0.0.1:${ssrfProxyPort}`) as the *unconditional* proxy. Reconcile:
+   append our params (`blockMedia, deviceName, proxyConfig`) before theirs, keep
+   our proxy-resolution chain but make the SSRF proxy the final `else` branch, and
+   destructure `{ context, securityState }` at both call sites. `scrapePage` gains
+   a `securityState` param and a try/catch that rethrows `InsecureConnectionError`
+   — keep it *and* our wider `waitUntil` union.
+
+6. **`transformerStack` auto-merges to upstream's, silently dropping
+   `uploadScreenshot`.** It went away with the Supabase removal, so a clean
+   auto-merge of that region loses it with no conflict. Re-add the import and the
+   stack entry (after `deriveMetadataFromRawHTML`, before the index senders). The
+   verifier's transformer checks catch this.
+
+## Runtime coverage: `.github/workflows/fork-e2e.yml`
+
+A fork-owned, secret-free workflow that runs the five fork snips through the
+self-hosted playwright path (a trimmed clone of upstream's `Server Test Suite`).
+It is the only gate that exercises our features at *runtime*; keep it green.
+`idmux` falls back to a test identity when `IDMUX_URL` is unset, and the snips
+scrape a local test-site, so no secrets are required. MinIO (a service in the
+workflow) backs the `scrape-storage` snip.
