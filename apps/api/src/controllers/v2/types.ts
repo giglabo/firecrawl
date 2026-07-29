@@ -1042,6 +1042,23 @@ const scrapeRequestSchemaBase = baseScrapeOptions.extend({
 
 export const scrapeRequestSchema = strictWithMessage(scrapeRequestSchemaBase)
   .refine(waitForRefine, waitForRefineOpts)
+  // Fork: the /v2/scrape route validates with THIS schema, not `scrapeOptions`,
+  // so the storage refine must be repeated here or a misconfigured provider
+  // (e.g. `{ provider: "s3" }` with no `s3` block) is silently accepted and the
+  // screenshot falls back to a data URI instead of being rejected.
+  .refine(
+    obj => {
+      if (!obj.storage) return true;
+      if (obj.storage.provider === "s3" && !obj.storage.s3) return false;
+      if (obj.storage.provider === "local" && !obj.storage.local) return false;
+      return true;
+    },
+    {
+      message:
+        "storage configuration object is required for the selected provider (s3 or local)",
+      path: ["storage"],
+    },
+  )
   .transform(extractTransformRequired);
 
 export type ScrapeRequest = z.infer<typeof scrapeRequestSchema>;
