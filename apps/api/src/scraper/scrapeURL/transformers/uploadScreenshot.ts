@@ -1,7 +1,8 @@
-// This file is an exception to the "no supabase in scrapeURL" rule,
-// and it makes me sad. - mogery
+// Upstream deleted this transformer along with its Supabase storage upload
+// (the Supabase SDK was dropped entirely in the move to Drizzle). We keep the
+// transformer because our pluggable storage providers live here; the Supabase
+// upload path is gone, so the chain is: storage provider -> data URI.
 
-import { supabase_service } from "../../../services/supabase";
 import { config } from "../../../config";
 import { Meta } from "..";
 import { Document } from "../../../controllers/v1/types";
@@ -120,26 +121,11 @@ async function uploadSingleScreenshot(
     }
   }
 
-  // Original Supabase path (cloud-only)
-  if (config.USE_DB_AUTHENTICATION) {
-    meta.logger.debug("Uploading screenshot to Supabase...");
-    const fileName = `screenshot-${crypto.randomUUID()}.${ext}`;
-
-    try {
-      await supabase_service.storage.from("media").upload(fileName, buffer, {
-        cacheControl: "3600",
-        upsert: false,
-        contentType,
-      });
-
-      return {
-        url: `https://service.firecrawl.dev/storage/v1/object/public/media/${encodeURIComponent(fileName)}`,
-      };
-    } catch (error) {
-      meta.logger.error(`Failed to upload screenshot to Supabase: ${error}`);
-    }
-  }
-
+  // No provider configured: hand the caller an inline data URI. Set
+  // SCREENSHOT_STORAGE_PROVIDER (or pass `storage` per request) to get URLs.
+  meta.logger.debug(
+    "No screenshot storage provider configured, returning data URI",
+  );
   return { url: dataUri };
 }
 
