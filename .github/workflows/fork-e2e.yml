@@ -53,6 +53,8 @@ jobs:
       MINIO_BUCKET: screenshots
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
+      # Private bucket for the presigned-URL tests; see the MinIO step below.
+      MINIO_PRIVATE_BUCKET: screenshots-private
       # Env-level storage in proxy mode: requests that do NOT carry their own
       # `storage` block get a URL back through the API, which scrape-screenshot-url
       # then actually fetches. The per-request MinIO test is unaffected -- proxy
@@ -164,12 +166,21 @@ jobs:
             # `anonymous set download` mirrors docker-compose.selfhost.yaml.
             # Without it the per-request MinIO test uploads fine but its URL
             # 403s -- the exact failure this suite now asserts against.
+            # `screenshots` is public (mirrors docker-compose.selfhost.yaml) so
+            # the public-URL path is genuinely fetchable. `screenshots-private`
+            # is deliberately left private: it is what the presigned-URL tests
+            # run against, and a control assertion checks its plain URL 403s --
+            # otherwise a broken signer would still "pass" against a public
+            # bucket.
             if docker run --rm --network host \
                  -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
                  minio/mc:latest mb --ignore-existing local/screenshots \
                && docker run --rm --network host \
                  -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
-                 minio/mc:latest anonymous set download local/screenshots; then
+                 minio/mc:latest anonymous set download local/screenshots \
+               && docker run --rm --network host \
+                 -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
+                 minio/mc:latest mb --ignore-existing local/screenshots-private; then
               ok=1; break
             fi
             echo "minio not ready, retry $i"; sleep 2

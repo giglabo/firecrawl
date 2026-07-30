@@ -139,3 +139,105 @@ describeIf(
     scrapeTimeout,
   );
 });
+
+// Presigned mode (SCREENSHOT_STORAGE_URL_MODE=signed globally, or
+// storage.s3.signedUrls per request). Exercised here through the per-request
+// path so one server can cover both modes.
+//
+// It runs against a bucket that is NOT public, and asserts that first: against
+// the public bucket a broken signer would still return 200 and the test would
+// prove nothing.
+const HAS_PRIVATE_MINIO = !!(
+  process.env.MINIO_ENDPOINT &&
+  process.env.MINIO_PRIVATE_BUCKET &&
+  process.env.MINIO_ACCESS_KEY &&
+  process.env.MINIO_SECRET_KEY
+);
+
+const privateS3 = () => ({
+  endpoint: process.env.MINIO_ENDPOINT!,
+  bucket: process.env.MINIO_PRIVATE_BUCKET!,
+  accessKeyId: process.env.MINIO_ACCESS_KEY!,
+  secretAccessKey: process.env.MINIO_SECRET_KEY!,
+  forcePathStyle: true,
+});
+
+describeIf(
+  TEST_SELF_HOST &&
+    HAS_PLAYWRIGHT &&
+    ALLOW_TEST_SUITE_WEBSITE &&
+    HAS_PRIVATE_MINIO,
+)("Presigned screenshot URLs", () => {
+  it(
+    "control: an unsigned URL into the private bucket is not readable",
+    async () => {
+      const response = await scrape(
+        {
+          url: TEST_SUITE_WEBSITE,
+          formats: ["screenshot"],
+          storage: { provider: "s3", s3: privateS3() } as any,
+        },
+        identity,
+      );
+
+      expect(response.screenshot).toBeDefined();
+      expect(response.screenshot).not.toContain("X-Amz-Signature");
+
+      const res = await fetch(response.screenshot!);
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    },
+    scrapeTimeout,
+  );
+
+  it(
+    "serves the image over a presigned URL",
+    async () => {
+      const response = await scrape(
+        {
+          url: TEST_SUITE_WEBSITE,
+          formats: ["screenshot"],
+          storage: {
+            provider: "s3",
+            s3: { ...privateS3(), signedUrls: true },
+          } as any,
+        },
+        identity,
+      );
+
+      expect(response.screenshot).toBeDefined();
+      expect(response.screenshot).toContain("X-Amz-Signature");
+      expect(response.screenshot).toContain("X-Amz-Expires");
+
+      const res = await fetch(response.screenshot!);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(/^image\//);
+
+      const body = Buffer.from(await res.arrayBuffer());
+      expect(body.length).toBeGreaterThan(0);
+    },
+    scrapeTimeout,
+  );
+
+  it(
+    "honours the requested expiry",
+    async () => {
+      const response = await scrape(
+        {
+          url: TEST_SUITE_WEBSITE,
+          formats: ["screenshot"],
+          storage: {
+            provider: "s3",
+            s3: { ...privateS3(), signedUrls: true, signedUrlTtlSeconds: 120 },
+          } as any,
+        },
+        identity,
+      );
+
+      const expires = new URL(response.screenshot!).searchParams.get(
+        "X-Amz-Expires",
+      );
+      expect(expires).toBe("120");
+    },
+    scrapeTimeout,
+  );
+});
