@@ -70,3 +70,5 @@ custom-docs/
 # Self-hosted env and data
 .env.selfhost
 data/screenshots/
+
+apps/api/src/lib/scrape-interact/*.md

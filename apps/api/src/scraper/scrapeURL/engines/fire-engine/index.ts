@@ -6,7 +6,6 @@ import {
   fireEngineStagingURL,
   FireEngineScrapeRequestChromeCDP,
   FireEngineScrapeRequestCommon,
-  FireEngineScrapeRequestPlaywright,
   FireEngineScrapeRequestTLSClient,
 } from "./scrape";
 import { EngineScrapeResult } from "..";
@@ -17,6 +16,7 @@ import {
 } from "./checkStatus";
 import {
   ActionError,
+  AddFeatureError,
   EngineError,
   DNSResolutionError,
   SiteError,
@@ -26,6 +26,7 @@ import {
   ProxySelectionError,
 } from "../../error";
 import * as Sentry from "@sentry/node";
+import { gunzipSync } from "node:zlib";
 import { specialtyScrapeCheck } from "../utils/specialtyHandler";
 import { fireEngineDelete } from "./delete";
 import { MockState } from "../../lib/mock";
@@ -39,9 +40,12 @@ import { getBrandingScript } from "./brandingScript";
 import { getDnaScript } from "./dnaScript";
 import { abTestFireEngine } from "../../../../services/ab-test";
 import { scheduleABComparison } from "../../../../services/ab-test-comparison";
+import { createHash } from "node:crypto";
 
 /** Default wait (ms) before running the branding script when user did not set waitFor. Lets the page settle so DOM/images are ready and reduces JS errors. */
 const BRANDING_DEFAULT_WAIT_MS = 2000;
+
+const MAX_GUNZIPPED_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 // This function does not take `Meta` on purpose. It may not access any
 // meta values to construct the request -- that must be done by the
@@ -49,7 +53,6 @@ const BRANDING_DEFAULT_WAIT_MS = 2000;
 async function performFireEngineScrape<
   Engine extends
     | FireEngineScrapeRequestChromeCDP
-    | FireEngineScrapeRequestPlaywright
     | FireEngineScrapeRequestTLSClient,
 >(
   meta: Meta,
@@ -139,7 +142,8 @@ async function performFireEngineScrape<
             error instanceof ActionError ||
             error instanceof UnsupportedFileError ||
             error instanceof FEPageLoadFailed ||
-            error instanceof ProxySelectionError
+            error instanceof ProxySelectionError ||
+            error instanceof AddFeatureError
           ) {
             fireEngineDelete(
               logger.child({
@@ -212,7 +216,21 @@ async function performFireEngineScrape<
     if (status.file) {
       const content = status.file.content;
       delete status.file;
-      status.content = Buffer.from(content, "base64").toString("utf8"); // TODO: handle other encodings via Content-Type tag
+      let buffer = Buffer.from(content, "base64");
+      // transparently decompress gzipped content
+      if (buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b) {
+        try {
+          buffer = gunzipSync(buffer, {
+            maxOutputLength: MAX_GUNZIPPED_FILE_SIZE,
+          });
+        } catch (error) {
+          if (error instanceof RangeError) {
+            throw new UnsupportedFileError("File exceeds size limit");
+          }
+          throw new UnsupportedFileError("Failed to decompress gzip content");
+        }
+      }
+      status.content = buffer.toString("utf8"); // TODO: handle other encodings via Content-Type tag
     }
 
     fireEngineDelete(
@@ -245,13 +263,51 @@ async function performFireEngineScrape<
       "fire-engine.duration_ms": Date.now() - startTime,
       "fire-engine.status_code": status.pageStatusCode,
       "fire-engine.content_length": status.content?.length,
-      "fire-engine.has_screenshot": !!status.screenshot,
+      "fire-engine.has_screenshot": !!(
+        status.screenshots && status.screenshots.length > 0
+      ),
       "fire-engine.has_pdf": !!(status as any).pdf,
       "fire-engine.job_id": (scrape as any).jobId,
     });
 
     return status;
   });
+}
+
+// Action types that only read or drive the DOM and don't depend on rendered
+// output. Anything not listed here (screenshot, pdf, and any future visual
+// action) keeps render-engine routing — fail safe, not open.
+const DOM_SAFE_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "wait",
+  "click",
+  "write",
+  "press",
+  "scroll",
+  "scrape",
+  "executeJavascript",
+]);
+
+// Branding needs media *loaded* (real image dimensions in the DOM), not
+// *rendered* — but blockMedia: false routes to the render engine, where
+// visually heavy pages can stall the renderer. Opt out of render routing
+// unless something actually needs visual output.
+export function shouldForceNonRender(input: {
+  formats: Meta["options"]["formats"];
+  actions?: Array<{ type: string }>;
+  youtubePostprocessorWillRun: boolean;
+}): boolean {
+  if (!hasFormatOfType(input.formats, "branding")) {
+    return false;
+  }
+
+  const needsVisualRendering =
+    hasFormatOfType(input.formats, "screenshot") !== undefined ||
+    (input.actions ?? []).some(a => !DOM_SAFE_ACTION_TYPES.has(a.type)) ||
+    hasFormatOfType(input.formats, "audio") !== undefined ||
+    hasFormatOfType(input.formats, "video") !== undefined ||
+    input.youtubePostprocessorWillRun;
+
+  return !needsVisualRendering;
 }
 
 export async function scrapeURLWithFireEngineChromeCDP(
@@ -265,6 +321,12 @@ export async function scrapeURLWithFireEngineChromeCDP(
     });
     const hasBranding = hasFormatOfType(meta.options.formats, "branding");
     const hasDna = hasFormatOfType(meta.options.formats, "dna");
+    const hasAudio = hasFormatOfType(meta.options.formats, "audio");
+    const hasVideo = hasFormatOfType(meta.options.formats, "video");
+    const shouldRunYoutubePostprocessor = youtubePostprocessor.shouldRun(
+      meta,
+      new URL(meta.rewrittenUrl ?? meta.url),
+    );
     const defaultWait = hasBranding || hasDna ? BRANDING_DEFAULT_WAIT_MS : 0;
     const effectiveWait =
       meta.options.waitFor != null && meta.options.waitFor !== 0
@@ -337,6 +399,14 @@ export async function scrapeURLWithFireEngineChromeCDP(
             },
           ]
         : []),
+      ...(hasAudio || hasVideo || shouldRunYoutubePostprocessor
+        ? ([
+            {
+              type: "getCookies",
+              metadata: { __firecrawl_internal: true },
+            },
+          ] as unknown as InternalAction[])
+        : []),
     ];
 
     const totalWait = actions.reduce(
@@ -347,10 +417,13 @@ export async function scrapeURLWithFireEngineChromeCDP(
     const shouldAllowMedia =
       hasFormatOfType(meta.options.formats, "branding") ||
       hasFormatOfType(meta.options.formats, "dna") ||
-      youtubePostprocessor.shouldRun(
-        meta,
-        new URL(meta.rewrittenUrl ?? meta.url),
-      );
+      shouldRunYoutubePostprocessor;
+
+    const forceNonRender = shouldForceNonRender({
+      formats: meta.options.formats,
+      actions: meta.options.actions ?? undefined,
+      youtubePostprocessorWillRun: shouldRunYoutubePostprocessor,
+    });
 
     const request: FireEngineScrapeRequestCommon &
       FireEngineScrapeRequestChromeCDP = {
@@ -371,11 +444,18 @@ export async function scrapeURLWithFireEngineChromeCDP(
       timeout: meta.abort.scrapeTimeout() ?? 300000,
       disableSmartWaitCache: meta.internalOptions.disableSmartWaitCache,
       mobileProxy: meta.featureFlags.has("stealthProxy"),
+      maxAge: meta.options.maxAge,
       saveScrapeResultToGCS:
         !meta.internalOptions.zeroDataRetention &&
         meta.internalOptions.saveScrapeResultToGCS,
       zeroDataRetention: meta.internalOptions.zeroDataRetention,
       ...(shouldAllowMedia ? { blockMedia: false } : {}),
+      ...(forceNonRender ? { forceNonRender: true } : {}),
+      persistentStorage: meta.options.profile
+        ? {
+            uniqueId: `${createHash("sha256").update(meta.internalOptions.teamId).digest("hex").slice(0, 16)}_${meta.options.profile.name}`,
+          }
+        : undefined,
     };
 
     let response = await performFireEngineScrape(
@@ -390,19 +470,12 @@ export async function scrapeURLWithFireEngineChromeCDP(
       true,
     );
 
+    let screenshot: string | undefined;
     if (hasFormatOfType(meta.options.formats, "screenshot")) {
-      // meta.logger.debug(
-      //   "Transforming screenshots from actions into screenshot field",
-      //   { screenshots: response.screenshots },
-      // );
-      if (response.screenshots) {
-        response.screenshot = response.screenshots.slice(-1)[0];
+      if (response.screenshots && response.screenshots.length > 0) {
+        screenshot = response.screenshots.slice(-1)[0];
         response.screenshots = response.screenshots.slice(0, -1);
       }
-      // meta.logger.debug("Screenshot transformation done", {
-      //   screenshots: response.screenshots,
-      //   screenshot: response.screenshot,
-      // });
     }
 
     if (!response.url) {
@@ -445,20 +518,28 @@ export async function scrapeURLWithFireEngineChromeCDP(
           };
         }
       });
+    const audioCookies = (response.actionResults ?? [])
+      .filter(x => x.type === "getCookies")
+      .flatMap(x => x.result.cookies);
+    const contentType =
+      (Object.entries(response.responseHeaders ?? {}).find(
+        x => x[0].toLowerCase() === "content-type",
+      ) ?? [])[1] ?? undefined;
 
     return {
       url: response.url ?? meta.url,
 
       html: response.content,
+      markdown: contentType?.includes("text/markdown")
+        ? response.content
+        : undefined,
+      json: response.json,
       error: response.pageError,
       statusCode: response.pageStatusCode,
 
-      contentType:
-        (Object.entries(response.responseHeaders ?? {}).find(
-          x => x[0].toLowerCase() === "content-type",
-        ) ?? [])[1] ?? undefined,
+      contentType,
 
-      screenshot: response.screenshot,
+      screenshot,
       ...(actions.length > 0
         ? {
             actions: {
@@ -475,84 +556,9 @@ export async function scrapeURLWithFireEngineChromeCDP(
       proxyUsed: response.usedMobileProxy ? "stealth" : "basic",
       youtubeTranscriptContent: response.youtubeTranscriptContent,
       timezone: response.timezone,
-    };
-  });
-}
-
-export async function scrapeURLWithFireEnginePlaywright(
-  meta: Meta,
-): Promise<EngineScrapeResult> {
-  return withSpan("engine.fire-engine.playwright", async span => {
-    setSpanAttributes(span, {
-      "engine.type": "fire-engine-playwright",
-      "engine.url": meta.url,
-      "engine.team_id": meta.internalOptions.teamId,
-    });
-    const totalWait = meta.options.waitFor;
-
-    const request: FireEngineScrapeRequestCommon &
-      FireEngineScrapeRequestPlaywright = {
-      url: meta.rewrittenUrl ?? meta.url,
-      scrapeId: meta.id,
-      engine: "playwright",
-      instantReturn: false,
-
-      headers: meta.options.headers,
-      priority: meta.internalOptions.priority,
-      screenshot:
-        hasFormatOfType(meta.options.formats, "screenshot") !== undefined,
-      fullPageScreenshot: hasFormatOfType(meta.options.formats, "screenshot")
-        ?.fullPage,
-      wait: meta.options.waitFor,
-      geolocation: meta.options.location,
-      blockAds: meta.options.blockAds,
-      mobileProxy: meta.featureFlags.has("stealthProxy"),
-
-      timeout: meta.abort.scrapeTimeout() ?? 300000,
-      saveScrapeResultToGCS:
-        !meta.internalOptions.zeroDataRetention &&
-        meta.internalOptions.saveScrapeResultToGCS,
-      zeroDataRetention: meta.internalOptions.zeroDataRetention,
-    };
-
-    let response = await performFireEngineScrape(
-      meta,
-      meta.logger.child({
-        method: "scrapeURLWithFireEnginePlaywright/callFireEngine",
-        request,
-      }),
-      request,
-      meta.mock,
-      meta.abort.asSignal(),
-    );
-
-    if (!response.url) {
-      meta.logger.warn("Fire-engine did not return the response's URL", {
-        response,
-        sourceURL: meta.url,
-      });
-    }
-
-    return {
-      url: response.url ?? meta.url,
-
-      html: response.content,
-      error: response.pageError,
-      statusCode: response.pageStatusCode,
-
-      contentType:
-        (Object.entries(response.responseHeaders ?? {}).find(
-          x => x[0].toLowerCase() === "content-type",
-        ) ?? [])[1] ?? undefined,
-
-      ...(response.screenshots !== undefined && response.screenshots.length > 0
-        ? {
-            screenshot: response.screenshots[0],
-          }
+      ...(hasAudio || hasVideo || shouldRunYoutubePostprocessor
+        ? { audioCookies }
         : {}),
-
-      proxyUsed: response.usedMobileProxy ? "stealth" : "basic",
-      timezone: response.timezone,
     };
   });
 }
@@ -582,6 +588,7 @@ export async function scrapeURLWithFireEngineTLSClient(
       mobileProxy: meta.featureFlags.has("stealthProxy"),
 
       timeout: meta.abort.scrapeTimeout() ?? 300000,
+      maxAge: meta.options.maxAge,
       saveScrapeResultToGCS:
         !meta.internalOptions.zeroDataRetention &&
         meta.internalOptions.saveScrapeResultToGCS,
@@ -605,18 +612,23 @@ export async function scrapeURLWithFireEngineTLSClient(
         sourceURL: meta.url,
       });
     }
+    const contentType =
+      (Object.entries(response.responseHeaders ?? {}).find(
+        x => x[0].toLowerCase() === "content-type",
+      ) ?? [])[1] ?? undefined;
 
     return {
       url: response.url ?? meta.url,
 
       html: response.content,
+      markdown: contentType?.includes("text/markdown")
+        ? response.content
+        : undefined,
+      json: response.json,
       error: response.pageError,
       statusCode: response.pageStatusCode,
 
-      contentType:
-        (Object.entries(response.responseHeaders ?? {}).find(
-          x => x[0].toLowerCase() === "content-type",
-        ) ?? [])[1] ?? undefined,
+      contentType,
 
       proxyUsed: response.usedMobileProxy ? "stealth" : "basic",
       timezone: response.timezone,
@@ -626,7 +638,7 @@ export async function scrapeURLWithFireEngineTLSClient(
 
 export function fireEngineMaxReasonableTime(
   meta: Meta,
-  engine: "chrome-cdp" | "playwright" | "tlsclient",
+  engine: "chrome-cdp" | "tlsclient",
 ): number {
   const hasBranding = hasFormatOfType(meta.options.formats, "branding");
   const hasDna = hasFormatOfType(meta.options.formats, "dna");
@@ -638,8 +650,6 @@ export function fireEngineMaxReasonableTime(
 
   if (engine === "tlsclient") {
     return 15000;
-  } else if (engine === "playwright") {
-    return (meta.options.waitFor ?? 0) + 30000;
   } else {
     return (
       effectiveWait +

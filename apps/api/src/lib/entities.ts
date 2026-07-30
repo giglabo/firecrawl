@@ -121,6 +121,8 @@ interface ImageSearchResult {
   imageHeight?: number;
   url?: string;
   position?: number;
+  answer?: string;
+  highlights?: string;
 }
 
 interface NewsSearchResult {
@@ -138,6 +140,8 @@ interface NewsSearchResult {
   links?: string[];
   screenshot?: string;
   metadata?: Record<string, any>;
+  answer?: string;
+  highlights?: string;
 }
 
 export interface WebSearchResult {
@@ -153,6 +157,8 @@ export interface WebSearchResult {
   links?: string[];
   screenshot?: string;
   metadata?: Record<string, any>;
+  answer?: string;
+  highlights?: string;
 }
 
 export type SearchResultType = "web" | "images" | "news";

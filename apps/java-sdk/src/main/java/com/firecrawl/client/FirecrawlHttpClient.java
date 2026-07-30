@@ -30,20 +30,40 @@ class FirecrawlHttpClient {
     final ObjectMapper objectMapper;
 
     FirecrawlHttpClient(String apiKey, String baseUrl, long timeoutMs, int maxRetries, double backoffFactor) {
+        this(apiKey, baseUrl, timeoutMs, maxRetries, backoffFactor, null);
+    }
+
+    FirecrawlHttpClient(String apiKey, String baseUrl, long timeoutMs, int maxRetries, double backoffFactor,
+                         OkHttpClient httpClient) {
         this.apiKey = apiKey;
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.maxRetries = maxRetries;
         this.backoffFactor = backoffFactor;
 
-        this.httpClient = new OkHttpClient.Builder()
-                .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
-                .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
-                .writeTimeout(timeoutMs, TimeUnit.MILLISECONDS)
-                .build();
+        if (httpClient != null) {
+            this.httpClient = httpClient;
+        } else {
+            this.httpClient = new OkHttpClient.Builder()
+                    .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .writeTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .build();
+        }
 
         this.objectMapper = new ObjectMapper()
                 .registerModule(new Jdk8Module())
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    }
+
+    /**
+     * Adds the Authorization header only when an API key is configured. Omitting
+     * it entirely (rather than sending an empty Bearer) lets scrape/search/interact
+     * use the keyless free tier.
+     */
+    private void applyAuth(Request.Builder builder) {
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.header("Authorization", "Bearer " + apiKey);
+        }
     }
 
     /**
@@ -67,9 +87,9 @@ class FirecrawlHttpClient {
         RequestBody requestBody = RequestBody.create(json, JSON);
         Request.Builder builder = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
                 .post(requestBody);
+        applyAuth(builder);
         for (Map.Entry<String, String> entry : extraHeaders.entrySet()) {
             builder.header(entry.getKey(), entry.getValue());
         }
@@ -78,15 +98,78 @@ class FirecrawlHttpClient {
     }
 
     /**
+     * Sends a PATCH request with JSON body.
+     */
+    <T> T patch(String path, Object body, Class<T> responseType) {
+        String url = baseUrl + path;
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(body);
+        } catch (JsonProcessingException e) {
+            throw new FirecrawlException("Failed to serialize request body", e);
+        }
+        RequestBody requestBody = RequestBody.create(json, JSON);
+        Request.Builder builder = new Request.Builder()
+                .url(url)
+                .header("Content-Type", "application/json")
+                .patch(requestBody);
+        applyAuth(builder);
+        Request request = builder.build();
+        return executeWithRetry(request, responseType);
+    }
+
+    /**
+     * Sends a POST multipart/form-data request.
+     */
+    <T> T postMultipart(
+            String path,
+            Map<String, String> fields,
+            String fileFieldName,
+            byte[] fileContent,
+            String filename,
+            String contentType,
+            Class<T> responseType
+    ) {
+        String url = baseUrl + path;
+        MultipartBody.Builder multipart = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM);
+
+        for (Map.Entry<String, String> entry : fields.entrySet()) {
+            multipart.addFormDataPart(entry.getKey(), entry.getValue());
+        }
+
+        MediaType mediaType;
+        if (contentType != null && !contentType.isBlank()) {
+            try {
+                mediaType = MediaType.get(contentType);
+            } catch (IllegalArgumentException ignored) {
+                mediaType = MediaType.get("application/octet-stream");
+            }
+        } else {
+            mediaType = MediaType.get("application/octet-stream");
+        }
+        RequestBody fileBody = RequestBody.create(fileContent, mediaType);
+        multipart.addFormDataPart(fileFieldName, filename, fileBody);
+
+        Request.Builder builder = new Request.Builder()
+                .url(url)
+                .post(multipart.build());
+        applyAuth(builder);
+        Request request = builder.build();
+
+        return executeWithRetry(request, responseType);
+    }
+
+    /**
      * Sends a GET request.
      */
     <T> T get(String path, Class<T> responseType) {
         String url = baseUrl + path;
-        Request request = new Request.Builder()
+        Request.Builder builder = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + apiKey)
-                .get()
-                .build();
+                .get();
+        applyAuth(builder);
+        Request request = builder.build();
         return executeWithRetry(request, responseType);
     }
 
@@ -94,11 +177,11 @@ class FirecrawlHttpClient {
      * Sends a GET request with full URL (for following next-page cursors).
      */
     <T> T getAbsolute(String absoluteUrl, Class<T> responseType) {
-        Request request = new Request.Builder()
+        Request.Builder builder = new Request.Builder()
                 .url(absoluteUrl)
-                .header("Authorization", "Bearer " + apiKey)
-                .get()
-                .build();
+                .get();
+        applyAuth(builder);
+        Request request = builder.build();
         return executeWithRetry(request, responseType);
     }
 
@@ -107,11 +190,11 @@ class FirecrawlHttpClient {
      */
     <T> T delete(String path, Class<T> responseType) {
         String url = baseUrl + path;
-        Request request = new Request.Builder()
+        Request.Builder builder = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + apiKey)
-                .delete()
-                .build();
+                .delete();
+        applyAuth(builder);
+        Request request = builder.build();
         return executeWithRetry(request, responseType);
     }
 

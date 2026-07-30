@@ -13,6 +13,18 @@ import {
   mergeScrapedContent,
   calculateScrapeCredits,
 } from "./scrape";
+import {
+  highlightsEnvReady,
+  runIndexedSearchHighlights,
+  searchHighlightsMode,
+} from "./highlights";
+import { trackSearchResults, trackSearchRequest } from "../lib/tracking";
+import type { BillingMetadata } from "../services/billing/types";
+import type { ThreatProtectionPolicy } from "../lib/threat-protection/types";
+import { checkUrlsAgainstThreatPolicy } from "../lib/threat-protection/request";
+import { calculateThreatScanCredits } from "../lib/scrape-billing";
+import { config } from "../config";
+import { logger as rootLogger } from "../lib/logger";
 
 interface SearchOptions {
   query: string;
@@ -24,19 +36,31 @@ interface SearchOptions {
   location?: string;
   sources: Array<{ type: string }>;
   categories?: CategoryOption[];
+  includeDomains?: string[];
+  excludeDomains?: string[];
   enterprise?: ("default" | "anon" | "zdr")[];
   scrapeOptions?: ScrapeOptions;
+  highlights?: boolean;
   timeout: number;
 }
 
 interface SearchContext {
   teamId: string;
+  orgId?: string | null;
   origin: string;
+  integration?: string | null;
   apiKeyId: number | null;
   flags: TeamFlags;
   requestId: string;
+  jobId: string;
+  apiVersion: string;
   bypassBilling?: boolean;
   zeroDataRetention?: boolean;
+  billing?: BillingMetadata;
+  agentIndexOnly?: boolean;
+  keylessReserved?: boolean;
+  /** Effective threat protection policy; blocked domains are removed from results entirely. */
+  threatProtectionPolicy?: ThreatProtectionPolicy | null;
 }
 
 interface SearchExecuteResult {
@@ -56,12 +80,14 @@ export async function executeSearch(
   const { query, limit, sources, categories, scrapeOptions } = options;
   const {
     teamId,
+    orgId,
     origin,
     apiKeyId,
     flags,
     requestId,
     bypassBilling,
     zeroDataRetention,
+    billing,
   } = context;
 
   const num_results_buffer = Math.floor(limit * 2);
@@ -72,6 +98,10 @@ export async function executeSearch(
   const { query: searchQuery, categoryMap } = buildSearchQuery(
     query,
     categories,
+    {
+      includeDomains: options.includeDomains,
+      excludeDomains: options.excludeDomains,
+    },
   );
 
   const searchResponse = (await search({
@@ -87,6 +117,46 @@ export async function executeSearch(
     type: searchTypes,
     enterprise: options.enterprise,
   })) as SearchV2Response;
+
+  // Threat protection: remove blocked results entirely — before
+  // slicing/counting, before scraping, and before returning. Checks are
+  // URL-level and deduped within this request; scan fees bill +2 per unique
+  // scanned URL (see calculateThreatScanCredits), charged as part of the
+  // search credits below.
+  let threatScanCredits = 0;
+  const threatPolicy = context.threatProtectionPolicy;
+  if (threatPolicy && threatPolicy.mode !== "off") {
+    const urlsToCheck = [
+      ...(searchResponse.web ?? []).map(x => x.url),
+      ...(searchResponse.news ?? []).map(x => x.url),
+      ...(searchResponse.images ?? []).map(x => x.url),
+    ].filter((x): x is string => !!x);
+
+    if (urlsToCheck.length > 0) {
+      const { decisionsByUrl } = await checkUrlsAgainstThreatPolicy(
+        urlsToCheck,
+        threatPolicy,
+        { teamId },
+      );
+      threatScanCredits = calculateThreatScanCredits(decisionsByUrl.values());
+      const isAllowed = (url: string | undefined | null): boolean => {
+        if (!url) return true;
+        const decision = decisionsByUrl.get(url);
+        return decision === undefined || decision.allowed;
+      };
+      if (searchResponse.web) {
+        searchResponse.web = searchResponse.web.filter(x => isAllowed(x.url));
+      }
+      if (searchResponse.news) {
+        searchResponse.news = searchResponse.news.filter(x => isAllowed(x.url));
+      }
+      if (searchResponse.images) {
+        searchResponse.images = searchResponse.images.filter(x =>
+          isAllowed(x.url),
+        );
+      }
+    }
+  }
 
   if (searchResponse.web && searchResponse.web.length > 0) {
     searchResponse.web = searchResponse.web.map(result => ({
@@ -129,19 +199,29 @@ export async function executeSearch(
 
   const isZDR = options.enterprise?.includes("zdr");
   const creditsPerTenResults = isZDR ? 10 : 2;
+  // Threat protection scan fees ride on the search credits: they are part of
+  // serving the search itself (every result domain is scanned before
+  // filtering), so they bill against the same feature and show up in the
+  // request's creditsUsed.
   const searchCredits =
-    Math.ceil(totalResultsCount / 10) * creditsPerTenResults;
+    Math.ceil(totalResultsCount / 10) * creditsPerTenResults +
+    threatScanCredits;
   let scrapeCredits = 0;
 
   const shouldScrape =
     scrapeOptions?.formats && scrapeOptions.formats.length > 0;
 
   if (shouldScrape && scrapeOptions) {
-    const itemsToScrape = getItemsToScrape(searchResponse, flags);
+    const itemsToScrape = getItemsToScrape(searchResponse, flags, {
+      team_id: teamId,
+      org_id: orgId ?? null,
+      origin,
+    });
 
     if (itemsToScrape.length > 0) {
       const scrapeOpts = {
         teamId,
+        orgId: orgId ?? null,
         origin,
         timeout: options.timeout,
         scrapeOptions,
@@ -149,6 +229,10 @@ export async function executeSearch(
         apiKeyId,
         zeroDataRetention,
         requestId,
+        billing,
+        agentIndexOnly: context.agentIndexOnly,
+        keylessReserved: context.keylessReserved,
+        threatProtectionPolicy: threatPolicy ?? null,
       };
 
       const allDocsWithCostTracking = await scrapeSearchResults(
@@ -166,6 +250,87 @@ export async function executeSearch(
       scrapeCredits = calculateScrapeCredits(allDocsWithCostTracking);
     }
   }
+
+  // Every eligible request runs the same index-backed highlight path. MCP/CLI,
+  // explicit opt-ins, and rollout-selected cohorts await and apply the result;
+  // everyone else runs it in shadow without delaying or mutating the response.
+  // Runs after scraping (mergeScrapedContent rebuilds the result objects, so
+  // highlight mutations must come last to survive). Uses the user's original
+  // query, not the domain-filtered upstream query.
+  if (zeroDataRetention !== true && !isZDR && highlightsEnvReady()) {
+    const mode = searchHighlightsMode({
+      requested: options.highlights,
+      origin: context.origin,
+      integration: context.integration,
+      cohortKey:
+        context.apiKeyId !== null
+          ? `api-key:${context.apiKeyId}`
+          : `team:${context.teamId}`,
+      rolloutPercent: config.HIGHLIGHT_ROLLOUT_PERCENT,
+    });
+    const highlightRun = runIndexedSearchHighlights(
+      searchResponse,
+      query,
+      logger,
+      {
+        mode,
+        requestId: context.requestId,
+        teamId: context.teamId,
+      },
+    );
+
+    if (mode === "apply") {
+      await highlightRun;
+    } else {
+      void highlightRun.catch(error => {
+        rootLogger.warn("Search highlights shadow failed", {
+          canonicalLog: "search/highlights",
+          mode,
+          requestId: context.requestId,
+          teamId: context.teamId,
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+      });
+    }
+  }
+
+  const scrapeFormats = scrapeOptions?.formats
+    ? scrapeOptions.formats.map((f: any) =>
+        typeof f === "string" ? f : f.type,
+      )
+    : [];
+
+  trackSearchRequest({
+    searchId: context.jobId,
+    requestId: context.requestId,
+    teamId,
+    query,
+    origin,
+    kind: billing?.endpoint ?? "search",
+    apiVersion: context.apiVersion,
+    lang: options.lang,
+    country: options.country,
+    sources: searchTypes,
+    numResults: totalResultsCount,
+    searchCredits,
+    scrapeCredits,
+    totalCredits: searchCredits + scrapeCredits,
+    hasScrapeFormats: shouldScrape ?? false,
+    scrapeFormats,
+    isSuccessful: true,
+    timeTaken: 0, // filled by caller if needed
+    zeroDataRetention: zeroDataRetention ?? false,
+  }).catch(err =>
+    logger.warn("Search request tracking failed", { error: err }),
+  );
+
+  trackSearchResults({
+    searchId: context.jobId,
+    teamId,
+    response: searchResponse,
+    zeroDataRetention: zeroDataRetention ?? false,
+    hasScrapeFormats: shouldScrape ?? false,
+  }).catch(err => logger.warn("Search tracking failed", { error: err }));
 
   return {
     response: searchResponse,

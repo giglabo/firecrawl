@@ -1,7 +1,8 @@
-// This file is an exception to the "no supabase in scrapeURL" rule,
-// and it makes me sad. - mogery
+// Upstream deleted this transformer along with its Supabase storage upload
+// (the Supabase SDK was dropped entirely in the move to Drizzle). We keep the
+// transformer because our pluggable storage providers live here; the Supabase
+// upload path is gone, so the chain is: storage provider -> data URI.
 
-import { supabase_service } from "../../../services/supabase";
 import { config } from "../../../config";
 import { Meta } from "..";
 import { Document } from "../../../controllers/v1/types";
@@ -88,7 +89,11 @@ async function uploadSingleScreenshot(
 ): Promise<UploadResult> {
   let contentType = dataUri.split(":")[1].split(";")[0];
   const base64Data = dataUri.split(",")[1];
-  let buffer = Buffer.from(base64Data, "base64");
+  // Annotate as the wide `Buffer` type: @types/node >=22 makes `Buffer`
+  // generic, so `Buffer.from` infers `Buffer<ArrayBuffer>` while
+  // `convertImageToWebp` returns `Buffer<ArrayBufferLike>` -- the reassignment
+  // below only type-checks when this variable is the wider type.
+  let buffer: Buffer = Buffer.from(base64Data, "base64");
   let ext = contentType.split("/")[1] || "png";
 
   if (format === "webp") {
@@ -120,26 +125,11 @@ async function uploadSingleScreenshot(
     }
   }
 
-  // Original Supabase path (cloud-only)
-  if (config.USE_DB_AUTHENTICATION) {
-    meta.logger.debug("Uploading screenshot to Supabase...");
-    const fileName = `screenshot-${crypto.randomUUID()}.${ext}`;
-
-    try {
-      await supabase_service.storage.from("media").upload(fileName, buffer, {
-        cacheControl: "3600",
-        upsert: false,
-        contentType,
-      });
-
-      return {
-        url: `https://service.firecrawl.dev/storage/v1/object/public/media/${encodeURIComponent(fileName)}`,
-      };
-    } catch (error) {
-      meta.logger.error(`Failed to upload screenshot to Supabase: ${error}`);
-    }
-  }
-
+  // No provider configured: hand the caller an inline data URI. Set
+  // SCREENSHOT_STORAGE_PROVIDER (or pass `storage` per request) to get URLs.
+  meta.logger.debug(
+    "No screenshot storage provider configured, returning data URI",
+  );
   return { url: dataUri };
 }
 

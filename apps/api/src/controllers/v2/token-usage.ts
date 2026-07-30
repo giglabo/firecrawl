@@ -1,7 +1,6 @@
 import { Response } from "express";
 import { ErrorResponse, RequestWithAuth } from "./types";
-import { getACUCTeam } from "../auth";
-import { RateLimiterMode } from "../../types";
+import { getTeamBalance, TOKENS_PER_CREDIT } from "../../services/autumn/usage";
 
 interface TokenUsageResponse {
   success: true;
@@ -17,16 +16,9 @@ export async function tokenUsageController(
   req: RequestWithAuth,
   res: Response<TokenUsageResponse | ErrorResponse>,
 ): Promise<void> {
-  const chunk =
-    req.acuc ??
-    (await getACUCTeam(
-      req.auth.team_id,
-      false,
-      false,
-      RateLimiterMode.Extract,
-    ));
+  const balance = await getTeamBalance(req.auth.team_id);
 
-  if (!chunk) {
+  if (!balance) {
     res.status(404).json({
       success: false,
       error: "Could not find token usage information",
@@ -37,10 +29,10 @@ export async function tokenUsageController(
   res.json({
     success: true,
     data: {
-      remainingTokens: chunk.remaining_credits,
-      planTokens: chunk.price_credits,
-      billingPeriodStart: chunk.sub_current_period_start,
-      billingPeriodEnd: chunk.sub_current_period_end,
+      remainingTokens: balance.remaining * TOKENS_PER_CREDIT,
+      planTokens: balance.planCredits * TOKENS_PER_CREDIT,
+      billingPeriodStart: balance.periodStart,
+      billingPeriodEnd: balance.periodEnd,
     },
   });
 }

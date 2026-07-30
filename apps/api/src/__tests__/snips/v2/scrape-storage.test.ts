@@ -60,7 +60,7 @@ describeIf(TEST_SELF_HOST && HAS_PLAYWRIGHT)("Screenshot storage", () => {
         identity,
       );
 
-      expect(raw.statusCode).toBe(422);
+      expect(raw.statusCode).toBe(400);
       expect(raw.body.success).toBe(false);
     },
     scrapeTimeout,
@@ -80,7 +80,7 @@ describeIf(TEST_SELF_HOST && HAS_PLAYWRIGHT)("Screenshot storage", () => {
         identity,
       );
 
-      expect(raw.statusCode).toBe(422);
+      expect(raw.statusCode).toBe(400);
       expect(raw.body.success).toBe(false);
     },
     scrapeTimeout,

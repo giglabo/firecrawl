@@ -1,0 +1,189 @@
+# Runtime guard for this fork's custom layer. Fork Guard (fork-guard.yml) proves
+# our source is *present* and our schemas still *parse*; this proves the features
+# actually *work* end-to-end: a real scrape through the standalone playwright
+# engine, real scroll screenshots, real screenshot upload to S3/MinIO, the
+# configurable waitUntil, per-request proxy validation, and byte tracking.
+#
+# It is a deliberately trimmed clone of upstream's `Server Test Suite`: the same
+# proven self-hosted boot (native lib, go html-to-md, playwright-service, local
+# test-site), but pinned to a single playwright/postgres config and running ONLY
+# our five snips. No AI / proxy / searxng / fire-engine, so it needs no secrets
+# (idmux falls back to a test identity when IDMUX_URL is unset).
+name: Fork E2E
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fork-e2e:
+    name: Fork snips (self-hosted playwright)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+      rabbitmq:
+        image: rabbitmq
+        ports:
+          - 5672:5672
+    env:
+      HOST: 0.0.0.0
+      TEST_SUITE_SELF_HOSTED: true
+      TEST_SUITE_WEBSITE: http://127.0.0.1:4321
+      TEST_API_KEY: test
+      TEST_TEAM_ID: bypass
+      PLAYWRIGHT_MICROSERVICE_URL: http://localhost:3003/scrape
+      NUQ_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      NUQ_RABBITMQ_URL: amqp://localhost:5672
+      USE_GO_MARKDOWN_PARSER: true
+      ALLOW_LOCAL_WEBHOOKS: true
+      FIRECRAWL_LOG_TO_FILE: true
+      ENV: test
+      # Screenshot storage: the scrape-storage snip reads these and sends them as
+      # a per-request s3 storage config; MinIO (started below) is the target.
+      MINIO_ENDPOINT: http://localhost:9000
+      MINIO_BUCKET: screenshots
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      FDB_VERSION: 7.3.63
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4
+        with:
+          version: 11.4.0
+
+      # The native lib (and thus the API) links libfdb_c at load time even on the
+      # postgres NuQ backend, so the client library must be present.
+      - name: Install FoundationDB client library
+        run: |
+          curl -fsSL -o /tmp/fdb-clients.deb \
+            "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_amd64.deb"
+          sudo dpkg -i /tmp/fdb-clients.deb
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            apps/api/pnpm-lock.yaml
+            apps/test-site/pnpm-lock.yaml
+            apps/playwright-service-ts/pnpm-lock.yaml
+
+      - run: pnpm fetch
+        working-directory: apps/api
+      - run: pnpm fetch
+        working-directory: apps/test-site
+      - run: pnpm fetch
+        working-directory: apps/playwright-service-ts
+
+      # Builds @mendable/firecrawl-rs (napi). Verified locally to build clean on
+      # the merged Cargo.toml (calamine git dep, image/webp for WebP output).
+      - name: Build native lib
+        run: pnpm install
+        working-directory: apps/api/native
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.24
+          cache-dependency-path: apps/api/sharedLibs/go-html-to-md/go.sum
+
+      - name: Build go-html-to-md
+        run: |
+          cd apps/api/sharedLibs/go-html-to-md
+          go build -o libhtml-to-markdown.so -buildmode=c-shared html-to-markdown.go
+
+      - name: Install Playwright node modules
+        run: pnpm install --frozen-lockfile
+        working-directory: ./apps/playwright-service-ts
+
+      - name: Install Playwright system deps
+        run: pnpm exec playwright install-deps chromium
+        working-directory: ./apps/playwright-service-ts
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium
+        working-directory: ./apps/playwright-service-ts
+
+      - name: Install API dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: apps/api
+        env:
+          npm_config_ignore_scripts: "true"
+
+      - name: Install test site dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: apps/test-site
+
+      - name: Build + serve test site
+        run: |
+          pnpm build
+          pnpm preview --port 4321 --strictPort --host 127.0.0.1 > test-site.log 2>&1 &
+          pnpx wait-on tcp:4321 -t 20s
+        working-directory: apps/test-site
+
+      - name: Run Docker Postgres (NuQ)
+        run: |
+          docker build -t firecrawl/nuq-postgres:latest ./apps/nuq-postgres
+          docker run -d -p 5432:5432 \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=postgres \
+            --name postgres firecrawl/nuq-postgres:latest
+          pnpx wait-on tcp:5432 -t 30s
+
+      - name: Run MinIO (screenshot storage target)
+        run: |
+          # Official MinIO image; bitnami/minio:latest was removed from Docker Hub.
+          # minio/minio does not auto-create buckets, so make it with minio/mc.
+          docker run -d -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            --name minio minio/minio:latest server /data
+          pnpx wait-on tcp:9000 -t 30s
+          ok=0
+          for i in $(seq 1 15); do
+            if docker run --rm --network host \
+                 -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
+                 minio/mc:latest mb --ignore-existing local/screenshots; then
+              ok=1; break
+            fi
+            echo "minio not ready, retry $i"; sleep 2
+          done
+          [ "$ok" = 1 ]
+
+      - name: Generate parse upload ref secret
+        run: echo "PARSE_UPLOAD_REF_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Start playwright-service
+        run: |
+          pnpm run dev > playwright.log 2>&1 &
+          pnpx wait-on tcp:3003 -t 15s
+        working-directory: ./apps/playwright-service-ts
+        env:
+          PORT: 3003
+
+      # `pnpm harness` boots the API + workers, then runs the wrapped command.
+      # The command MUST be `pnpm test:snips*` -- harness.ts only gates the command
+      # on API readiness when command[1] startsWith "test:snips" (otherwise vitest
+      # races the API boot and every request is ECONNREFUSED). `test:snips:fork`
+      # runs only our five snips; each self-gates on TEST_SUITE_SELF_HOSTED and a
+      # reachable playwright microservice.
+      - name: Run fork snips
+        run: pnpm harness pnpm test:snips:fork
+        working-directory: apps/api
+        env:
+          npm_config_ignore_scripts: "true"
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          echo "===== playwright-service ====="; cat apps/playwright-service-ts/playwright.log 2>/dev/null || true
+          echo "===== test-site ====="; cat apps/test-site/test-site.log 2>/dev/null || true
+          echo "===== postgres ====="; docker logs postgres 2>/dev/null | tail -50 || true
+          echo "===== minio ====="; docker logs minio 2>/dev/null | tail -50 || true

@@ -7,6 +7,7 @@ import { MockState } from "../../lib/mock";
 import { getDocFromGCS } from "../../../../lib/gcs-jobs";
 import {
   ActionError,
+  AddFeatureError,
   DNSResolutionError,
   EngineError,
   FEPageLoadFailed,
@@ -18,6 +19,14 @@ import {
 import { Meta } from "../..";
 
 import { config } from "../../../../config";
+
+const browserCookieSchema = z
+  .object({
+    name: z.string(),
+    value: z.string(),
+  })
+  .passthrough();
+
 export type FireEngineScrapeRequestCommon = {
   url: string;
   scrapeId?: string;
@@ -42,6 +51,7 @@ export type FireEngineScrapeRequestCommon = {
   mobileProxy?: boolean; // leave it undefined if user doesn't specify
 
   timeout?: number;
+  maxAge?: number;
   saveScrapeResultToGCS?: boolean;
   zeroDataRetention?: boolean;
 };
@@ -51,19 +61,11 @@ export type FireEngineScrapeRequestChromeCDP = {
   skipTlsVerification?: boolean;
   actions?: InternalAction[];
   blockMedia?: boolean;
+  /** Opt out of render-engine routing (blockMedia: false normally forces it). */
+  forceNonRender?: boolean;
   mobile?: boolean;
   disableSmartWaitCache?: boolean;
-};
-
-export type FireEngineScrapeRequestPlaywright = {
-  engine: "playwright";
-  blockAds?: boolean; // default: true
-
-  // mutually exclusive, default: false
-  screenshot?: boolean;
-  fullPageScreenshot?: boolean;
-
-  wait?: number; // default: 0
+  persistentStorage?: { uniqueId: string };
 };
 
 export type FireEngineScrapeRequestTLSClient = {
@@ -77,6 +79,7 @@ const successSchema = z.object({
 
   timeTaken: z.number(),
   content: z.string(),
+  json: z.unknown().optional(),
   url: z.string().optional(),
 
   pageStatusCode: z.number(),
@@ -84,14 +87,11 @@ const successSchema = z.object({
 
   // TODO: this needs to be non-optional, might need fixes on f-e side to ensure reliability
   responseHeaders: z.record(z.string(), z.string()).optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 
   // timeTakenCookie: z.number().optional(),
   // timeTakenRequest: z.number().optional(),
 
-  // legacy: playwright only
-  screenshot: z.string().optional(),
-
-  // new: actions
   screenshots: z.string().array().optional(),
   actionContent: z
     .object({
@@ -137,6 +137,15 @@ const successSchema = z.object({
           link: z.string(),
         }),
       }),
+      z.object({
+        idx: z.number(),
+        type: z.literal("getCookies"),
+        result: z
+          .object({
+            cookies: browserCookieSchema.array(),
+          })
+          .passthrough(),
+      }),
     ])
     .array()
     .optional(),
@@ -166,6 +175,7 @@ const processingSchema = z.object({
 
 const failedSchema = z.object({
   error: z.string(),
+  retryWithStealth: z.boolean().optional(),
 });
 
 export const fireEngineURL =
@@ -176,7 +186,6 @@ export const fireEngineStagingURL =
 export async function fireEngineScrape<
   Engine extends
     | FireEngineScrapeRequestChromeCDP
-    | FireEngineScrapeRequestPlaywright
     | FireEngineScrapeRequestTLSClient,
 >(
   meta: Meta,
@@ -229,6 +238,16 @@ export async function fireEngineScrape<
       status,
     });
     if (
+      failedParse.data.retryWithStealth &&
+      meta.options.proxy === "auto" &&
+      !meta.featureFlags.has("stealthProxy")
+    ) {
+      logger.info(
+        "Scrape signaled retryWithStealth. Adding stealthProxy flag.",
+      );
+      throw new AddFeatureError(["stealthProxy"]);
+    }
+    if (
       typeof status.error === "string" &&
       status.error.includes("Chrome error: ")
     ) {
@@ -252,11 +271,10 @@ export async function fireEngineScrape<
       );
     } else if (
       typeof status.error === "string" &&
-      status.error.includes("File size exceeds")
+      (status.error.includes("File size exceeds") ||
+        status.error.includes("File exceeds size limit"))
     ) {
-      throw new UnsupportedFileError(
-        "File size exceeds " + status.error.split("File size exceeds ")[1],
-      );
+      throw new UnsupportedFileError("File exceeds size limit");
     } else if (
       typeof status.error === "string" &&
       status.error.includes("failed to finish without timing out")

@@ -7,6 +7,7 @@ import {
   MAX_MAP_LIMIT,
 } from "../controllers/v2/types";
 import { crawlToCrawler, StoredCrawl } from "./crawl-redis";
+import { getScrapeZDR } from "./zdr-helpers";
 import {
   checkAndUpdateURLForMap,
   isSameDomain,
@@ -85,6 +86,7 @@ export async function getMapResults({
   includeSubdomains = true,
   crawlerOptions = {},
   teamId,
+  orgId,
   allowExternalLinks,
   abort = new AbortController().signal,
   filterByPath = true,
@@ -102,6 +104,7 @@ export async function getMapResults({
   includeSubdomains?: boolean;
   crawlerOptions?: any;
   teamId: string;
+  orgId?: string | null;
   origin?: string;
   includeMetadata?: boolean;
   allowExternalLinks?: boolean;
@@ -130,7 +133,7 @@ export async function getMapResults({
 
   const id = providedId ?? uuidv7();
   let mapResults: MapDocument[] = [];
-  const zeroDataRetention = flags?.forceZDR || false;
+  const zeroDataRetention = getScrapeZDR(flags) === "forced" || false;
 
   const sc: StoredCrawl = {
     originUrl: url,
@@ -143,7 +146,7 @@ export async function getMapResults({
       ...(location ? { location } : {}),
       ...(headers ? { headers } : {}),
     }),
-    internalOptions: { teamId },
+    internalOptions: { teamId, orgId: orgId ?? null },
     team_id: teamId,
     createdAt: Date.now(),
     zeroDataRetention,
@@ -369,6 +372,7 @@ export async function buildPromptWithWebsiteStructure({
   basePrompt,
   url,
   teamId,
+  orgId,
   flags,
   logger,
   limit = 50,
@@ -380,6 +384,7 @@ export async function buildPromptWithWebsiteStructure({
   basePrompt: string;
   url: string;
   teamId: string;
+  orgId?: string | null;
   flags: TeamFlags | null;
   logger: Logger;
   limit?: number;
@@ -396,6 +401,7 @@ export async function buildPromptWithWebsiteStructure({
       includeSubdomains,
       crawlerOptions: { sitemap: "include" },
       teamId,
+      orgId: orgId ?? null,
       flags,
       allowExternalLinks,
       filterByPath: false,

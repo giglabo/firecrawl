@@ -116,7 +116,7 @@ describeIf(TEST_SELF_HOST && HAS_PLAYWRIGHT)("waitUntil option", () => {
         identity,
       );
 
-      expect(response.statusCode).toBe(422);
+      expect(response.statusCode).toBe(400);
     },
     scrapeTimeout,
   );

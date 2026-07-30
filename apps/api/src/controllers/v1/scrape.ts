@@ -14,6 +14,11 @@ import { fromV1ScrapeOptions } from "../v2/types";
 import { TransportableError } from "../../lib/error";
 import { NuQJob } from "../../services/worker/nuq";
 import { checkPermissions } from "../../lib/permissions";
+import {
+  actionTypesOf,
+  checkKeyFormatRestriction,
+  formatTypesOf,
+} from "../../lib/key-restriction";
 import { includesFormat } from "../../lib/format-utils";
 import { teamConcurrencySemaphore } from "../../services/worker/team-semaphore";
 import { processJobInternal } from "../../services/worker/scrape-worker";
@@ -22,6 +27,17 @@ import { AbortManagerThrownError } from "../../scraper/scrapeURL/lib/abortManage
 import { logRequest } from "../../services/logging/log_job";
 import { getErrorContactMessage } from "../../lib/deployment";
 import { captureExceptionWithZdrCheck } from "../../services/sentry";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
+import {
+  KEYLESS_FREE_TIER_LIMIT_MESSAGE,
+  adjustKeylessCredits,
+  logKeylessCreditUsage,
+  reserveKeylessCredits,
+} from "../../lib/keyless";
+import { projectScrapeCredits } from "../../lib/keyless-credit-projection";
+import { applyAgentAuthDiscoveryHeader } from "../../lib/agent-auth-discovery";
+import { resolveThreatProtection } from "../../lib/threat-protection/request";
+import { getEffectiveConcurrencyLimit } from "../../lib/concurrency-limit";
 
 export async function scrapeController(
   req: RequestWithAuth<{}, ScrapeResponse, ScrapeRequest>,
@@ -36,7 +52,22 @@ export async function scrapeController(
   const preNormalizedBody = { ...req.body };
   req.body = scrapeRequestSchema.parse(req.body);
 
-  const permissions = checkPermissions(req.body, req.acuc?.flags);
+  const threatProtection = await resolveThreatProtection({
+    teamId: req.auth.team_id,
+    orgId: req.acuc?.org_id ?? null,
+    flags: req.acuc?.flags ?? null,
+    override: req.body.threatProtection,
+  });
+  if (threatProtection.error) {
+    return res.status(403).json({
+      success: false,
+      error: threatProtection.error,
+    });
+  }
+
+  const permissions = checkPermissions(req.body, req.acuc?.flags, {
+    threatProtectionOrgConfig: threatProtection.orgConfig,
+  });
   if (permissions.error) {
     return res.status(403).json({
       success: false,
@@ -44,8 +75,21 @@ export async function scrapeController(
     });
   }
 
+  const keyRestriction = await checkKeyFormatRestriction(
+    formatTypesOf(req.body.formats),
+    actionTypesOf(req.body.actions),
+    req.acuc?.api_key_id,
+    req.acuc?.flags ?? null,
+  );
+  if (!keyRestriction.allowed) {
+    return res.status(keyRestriction.status).json({
+      success: false,
+      error: keyRestriction.error,
+    });
+  }
+
   const zeroDataRetention =
-    req.acuc?.flags?.forceZDR || req.body.zeroDataRetention;
+    getScrapeZDR(req.acuc?.flags) === "forced" || req.body.zeroDataRetention;
 
   const logger = _logger.child({
     method: "scrapeController",
@@ -67,7 +111,7 @@ export async function scrapeController(
     account: req.account,
   });
 
-  logRequest({
+  const logRequestPromise = logRequest({
     id: jobId,
     kind: "scrape",
     api_version: "v1",
@@ -95,6 +139,30 @@ export async function scrapeController(
     req.body.timeout,
     req.auth.team_id,
   );
+  const projectedKeylessCredits = !isDirectToBullMQ
+    ? projectScrapeCredits(
+        scrapeOptions,
+        req.acuc?.flags ?? null,
+        zeroDataRetention ?? false,
+      )
+    : 0;
+  let reservedKeylessCredits = 0;
+  let reconciledKeylessCredits = false;
+
+  if (projectedKeylessCredits > 0) {
+    const reservation = await reserveKeylessCredits(
+      req.auth.team_id,
+      projectedKeylessCredits,
+    );
+    if (!reservation.ok) {
+      applyAgentAuthDiscoveryHeader(res);
+      return res.status(429).json({
+        success: false,
+        error: KEYLESS_FREE_TIER_LIMIT_MESSAGE,
+      });
+    }
+    reservedKeylessCredits = projectedKeylessCredits;
+  }
 
   const totalWait =
     (req.body.waitFor ?? 0) +
@@ -122,7 +190,7 @@ export async function scrapeController(
     doc = await teamConcurrencySemaphore.withSemaphore(
       req.auth.team_id,
       jobId,
-      req.acuc?.concurrency || 1,
+      await getEffectiveConcurrencyLimit(req.auth.team_id, req.acuc?.org_id),
       aborter.signal,
       timeout ?? 60_000,
       async limited => {
@@ -160,14 +228,20 @@ export async function scrapeController(
               bypassBilling: isDirectToBullMQ,
               zeroDataRetention,
               teamFlags: req.acuc?.flags ?? null,
+              orgId: req.acuc?.org_id ?? null,
+              agentIndexOnly: (req as any).agentIndexOnly ?? false,
+              threatProtection: threatProtection.policy ?? undefined,
             },
             skipNuq: true,
             origin,
             integration: req.body.integration,
+            billing: { endpoint: "scrape", jobId },
             startTime: controllerStartTime,
             zeroDataRetention: zeroDataRetention ?? false,
             apiKeyId: req.acuc?.api_key_id ?? null,
             concurrencyLimited: limited,
+            keylessReserved: reservedKeylessCredits > 0,
+            logRequestPromise: logRequestPromise,
           },
         };
 
@@ -176,6 +250,13 @@ export async function scrapeController(
       },
     );
   } catch (e) {
+    if (reservedKeylessCredits > 0 && !reconciledKeylessCredits) {
+      reconciledKeylessCredits = true;
+      adjustKeylessCredits(req.auth.team_id, -reservedKeylessCredits).catch(
+        () => {},
+      );
+    }
+
     const timeoutErr =
       e instanceof TransportableError && e.code === "SCRAPE_TIMEOUT";
 
@@ -195,8 +276,34 @@ export async function scrapeController(
         });
       }
 
+      if (e.code === "AGENT_INDEX_ONLY") {
+        return res.status(403).json({
+          success: false,
+          code: e.code,
+          error: e.message,
+          sponsor_status: "pending",
+          login_url: "https://firecrawl.dev/signin",
+        });
+      }
+
       if (e.code === "SCRAPE_ACTIONS_NOT_SUPPORTED") {
         return res.status(400).json({
+          success: false,
+          code: e.code,
+          error: e.message,
+        });
+      }
+
+      if (e.code === "unsafe_domain_blocked") {
+        return res.status(403).json({
+          success: false,
+          code: e.code,
+          error: e.message,
+        });
+      }
+
+      if (e.code === "SCRAPE_MEDIA_ACCESS_DENIED") {
+        return res.status(403).json({
           success: false,
           code: e.code,
           error: e.message,
@@ -249,6 +356,18 @@ export async function scrapeController(
     if (doc && doc.rawHtml) {
       delete doc.rawHtml;
     }
+  }
+
+  if (reservedKeylessCredits > 0 && !reconciledKeylessCredits) {
+    reconciledKeylessCredits = true;
+    const actualKeylessCredits = doc?.metadata?.creditsUsed ?? 0;
+    adjustKeylessCredits(
+      req.auth.team_id,
+      actualKeylessCredits - reservedKeylessCredits,
+    ).catch(() => {});
+    logKeylessCreditUsage(req.auth.team_id, actualKeylessCredits).catch(
+      () => {},
+    );
   }
 
   const totalRequestTime = new Date().getTime() - middlewareStartTime;

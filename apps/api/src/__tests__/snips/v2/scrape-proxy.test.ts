@@ -46,7 +46,7 @@ describeIf(TEST_SELF_HOST && HAS_PLAYWRIGHT)("proxyConfig option", () => {
         identity,
       );
 
-      expect(response.statusCode).toBe(422);
+      expect(response.statusCode).toBe(400);
     },
     scrapeTimeout,
   );
@@ -67,8 +67,8 @@ describeIf(TEST_SELF_HOST && HAS_PLAYWRIGHT)("proxyConfig option", () => {
         identity,
       );
 
-      // Should not be 422 (validation error) — may fail with scrape error if proxy unreachable
-      expect(response.statusCode).not.toBe(422);
+      // Should not be 400 (validation error) — may fail with scrape error if proxy unreachable
+      expect(response.statusCode).not.toBe(400);
     },
     scrapeTimeout,
   );
@@ -88,7 +88,7 @@ describeIf(TEST_SELF_HOST && HAS_PLAYWRIGHT)("proxyConfig option", () => {
         identity,
       );
 
-      expect(response.statusCode).toBe(422);
+      expect(response.statusCode).toBe(400);
     },
     scrapeTimeout,
   );

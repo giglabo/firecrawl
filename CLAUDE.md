@@ -1,6 +1,6 @@
 Firecrawl is a web scraper API. The directory you have access to is a monorepo:
  - `apps/api` has the actual API and worker code
- - `apps/js-sdk`, `apps/python-sdk`, and `apps/rust-sdk` are various SDKs
+ - `apps/*-sdk` are various SDKs
 
 When making changes to the API, here are the general steps you should take:
 1. Write some end-to-end tests that assert your win conditions, if they don't already exist
@@ -12,7 +12,7 @@ When making changes to the API, here are the general steps you should take:
     - If it requires fire-engine: `!process.env.TEST_SUITE_SELF_HOSTED`
     - If it requires AI: `!process.env.TEST_SUITE_SELF_HOSTED || process.env.OPENAI_API_KEY || process.env.OLLAMA_BASE_URL`
 2. Write code to achieve your win conditions
-3. Run your tests using `pnpm harness jest ...`
+3. Run your tests using `pnpm harness pnpm exec vitest run ...` (upstream migrated the test runner from jest to vitest; `vitest.config.ts` sets `globals: true`, so `describe`/`it`/`expect` still work without imports)
   - `pnpm harness` is a command that gets the API server and workers up for you to run the tests. Don't try to `pnpm start` manually.
   - The full test suite takes a long time to run, so you should try to only execute the relevant tests locally, and let CI run the full test suite.
 4. Push to a branch, open a PR, and let CI run to verify your win condition.
@@ -75,13 +75,27 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
    - If upstream changes `createContext` signature, adapt ours to match while preserving our `blockMedia` and `deviceName` parameters
    - Keep the `wait_until` parameter in the request interface and the `scrapePage` call — upstream hardcodes `'load'`, we make it configurable
 
-6. **`uploadScreenshot.ts` — keep our async pluggable storage.** If upstream changes the upload logic, adapt but preserve the provider resolution chain: per-request config → env config → Supabase → data URI fallback.
+6. **`uploadScreenshot.ts` — keep our async pluggable storage.** Upstream deleted this file, so it conflicts as `UD`: resolve with `--ours`, then re-add its import and `transformerStack` entry in `transformers/index.ts`. Preserve the provider resolution chain: per-request config → env config → data URI fallback. (The old Supabase step is gone — upstream deleted both `services/supabase.ts` and the `@supabase/supabase-js` dependency.)
 
 7. **After merge, verify:**
    ```bash
-   cd apps/api && npx tsc --noEmit
-   cd apps/playwright-service-ts && npx tsc --noEmit
-   pnpm harness jest -- --testPathPattern="scrape-dna|scrape-storage|scrape-waituntil|scrape-proxy"
+   node scripts/verify-fork-invariants.mjs          # 46 checks; must be 46/46
+   # tsc needs the native lib built first, otherwise every `@mendable/firecrawl-rs`
+   # import is a false "Cannot find module" error (the napi .d.ts is regenerated
+   # by the build). Build it, then typecheck:
+   (cd apps/api/native && pnpm install)             # napi build -> regenerates index.d.ts
+   (cd apps/api && pnpm install --ignore-scripts && ./node_modules/.bin/tsc --noEmit)
+   (cd apps/playwright-service-ts && pnpm install --ignore-scripts && ./node_modules/.bin/tsc --noEmit)
+   # e2e for the fork's five snips (self-hosted playwright path). CI runs this as
+   # the `Fork E2E` workflow (.github/workflows/fork-e2e.yml); locally:
+   pnpm harness pnpm exec vitest run \
+     src/__tests__/snips/v2/scrape-dna.test.ts \
+     src/__tests__/snips/v2/scrape-storage.test.ts \
+     src/__tests__/snips/v2/scrape-waituntil.test.ts \
+     src/__tests__/snips/v2/scrape-proxy.test.ts \
+     src/__tests__/snips/v2/scrape-bytes-downloaded.test.ts
    ```
 
-See `MERGE-GUIDE.md` for a detailed walkthrough of the last merge (upstream as of 2026-03-14).
+**Use the `merge-upstream` skill** (`.claude/skills/merge-upstream/`) to perform a merge — it derives the current conflict surface rather than describing a fixed one, and `reference/file-playbook.md` holds the per-file rules and known traps. `MERGE-GUIDE.md` is a **historical plan that was never executed** and is ~950 upstream commits stale; do not follow it.
+
+Never bypass `knip` failures (e.g. with `git commit --no-verify`). If the pre-commit `knip` check fails, fix the reported unused exports/files — even if they predate your change — before committing.

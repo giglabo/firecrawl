@@ -44,6 +44,12 @@ const baseBrandingEnhancementSchema = z.object({
   // Color role clarification
   colorRoles: z.object({
     primaryColor: z.string().describe("Main brand color (hex)"),
+    secondaryColor: z
+      .string()
+      .optional()
+      .describe(
+        "Secondary brand color (hex) - a complementary color distinct from primary, often used for secondary UI elements, headings, or supporting brand visuals. Omit or return empty string if no clear secondary color exists.",
+      ),
     accentColor: z.string().describe("Accent/CTA color (hex)"),
     backgroundColor: z.string().describe("Main background color (hex)"),
     textPrimary: z.string().describe("Primary text color (hex)"),
@@ -131,12 +137,20 @@ export function getBrandingEnhancementSchema(hasLogoCandidates: boolean) {
     : baseBrandingEnhancementSchema;
 }
 
-// Type - logoSelection is optional in the type even though it's required in schema when candidates exist
+// Type - logoSelection is optional in the type even though it's required in
+// schema when candidates exist. personality/designSystem are optional so the
+// LLM-failure fallback can omit them instead of fabricating values.
 export type BrandingEnhancement = Omit<
   z.infer<typeof brandingEnhancementSchemaWithLogo>,
-  "logoSelection"
+  "logoSelection" | "personality" | "designSystem"
 > & {
   logoSelection?: z.infer<
     typeof brandingEnhancementSchemaWithLogo
   >["logoSelection"];
+  personality?: z.infer<
+    typeof brandingEnhancementSchemaWithLogo
+  >["personality"];
+  designSystem?: z.infer<
+    typeof brandingEnhancementSchemaWithLogo
+  >["designSystem"];
 };

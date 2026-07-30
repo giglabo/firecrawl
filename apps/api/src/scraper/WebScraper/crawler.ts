@@ -73,6 +73,7 @@ export class WebCrawler {
   private zeroDataRetention: boolean;
   private location?: ScrapeOptions["location"];
   private headers?: Record<string, string>;
+  private robotsUserAgent?: string;
 
   constructor({
     jobId,
@@ -94,6 +95,7 @@ export class WebCrawler {
     zeroDataRetention,
     location,
     headers,
+    robotsUserAgent,
   }: {
     jobId: string;
     initialUrl: string;
@@ -114,6 +116,7 @@ export class WebCrawler {
     zeroDataRetention?: boolean;
     location?: ScrapeOptions["location"];
     headers?: Record<string, string>;
+    robotsUserAgent?: string;
   }) {
     this.jobId = jobId;
     this.initialUrl = initialUrl;
@@ -143,6 +146,7 @@ export class WebCrawler {
     this.currentDiscoveryDepth = currentDiscoveryDepth ?? 0;
     this.location = location;
     this.headers = headers;
+    this.robotsUserAgent = robotsUserAgent;
   }
 
   public setBaseUrl(newBase: string): void {
@@ -156,16 +160,23 @@ export class WebCrawler {
     maxDepth: number,
     fromMap: boolean = false,
     skipRobots: boolean = false,
+    ignoreDiscoveryDepth: boolean = false,
   ): Promise<FilterLinksResult> {
     const denialReasons = new Map<string, string>();
 
-    if (this.currentDiscoveryDepth === this.maxDiscoveryDepth) {
+    if (
+      !ignoreDiscoveryDepth &&
+      this.currentDiscoveryDepth === this.maxDiscoveryDepth
+    ) {
       this.logger.debug("Max discovery depth hit, filtering off all links", {
         currentDiscoveryDepth: this.currentDiscoveryDepth,
         maxDiscoveryDepth: this.maxDiscoveryDepth,
       });
       sitemapLinks.forEach(link => {
-        denialReasons.set(link, `This URL was not crawled because the maximum discovery depth (${this.maxDiscoveryDepth}) has been reached. Discovery depth counts how many 'hops' from the starting URL a page is. To crawl more pages, increase the maxDiscoveryDepth value in your crawl request.`);
+        denialReasons.set(
+          link,
+          `This URL was not crawled because the maximum discovery depth (${this.maxDiscoveryDepth}) has been reached. Discovery depth counts how many 'hops' from the starting URL a page is. To crawl more pages, increase the maxDiscoveryDepth value in your crawl request.`,
+        );
       });
       return { links: [], denialReasons };
     }
@@ -188,6 +199,7 @@ export class WebCrawler {
         allowBackwardCrawling: this.allowBackwardCrawling,
         ignoreRobotsTxt: this.ignoreRobotsTxt || skipRobots,
         robotsTxt: this.robotsTxt,
+        robotsUserAgent: this.robotsUserAgent,
         allowExternalContentLinks: this.allowExternalContentLinks,
         allowSubdomains: this.allowSubdomains,
       });
@@ -246,7 +258,10 @@ export class WebCrawler {
             break;
           default:
             // Use the static enum message for other cases
-            fancyDenialReasons.set(key, DenialReason[value]);
+            fancyDenialReasons.set(
+              key,
+              DenialReason[value as keyof typeof DenialReason] ?? value,
+            );
         }
       });
 
@@ -395,12 +410,10 @@ export class WebCrawler {
           }
         }
 
-        const isAllowed =
-          this.ignoreRobotsTxt || skipRobots
-            ? true
-            : ((this.robots.isAllowed(link, "FireCrawlAgent") ||
-                this.robots.isAllowed(link, "FirecrawlAgent")) ??
-              true);
+        const isAllowed = this.isRobotsAllowed(
+          link,
+          this.ignoreRobotsTxt || skipRobots,
+        );
         // Check if the link is disallowed by robots.txt
         if (!isAllowed) {
           this.logger.debug(`Link disallowed by robots.txt: ${link}`, {
@@ -455,6 +468,15 @@ export class WebCrawler {
           url: this.robotsTxtUrl,
           zeroDataRetention: this.zeroDataRetention,
           location: this.location,
+          ...(this.robotsUserAgent
+            ? {
+                headers: {
+                  ...this.headers,
+                  "User-Agent": this.robotsUserAgent,
+                },
+                skipCache: true,
+              }
+            : {}),
         },
         this.jobId,
         this.logger,
@@ -485,9 +507,10 @@ export class WebCrawler {
     const checker = createRobotsChecker(this.initialUrl, txt);
     this.robots = checker.robots;
     this.robotsTxtUrl = checker.robotsTxtUrl;
-    const delay =
-      this.robots.getCrawlDelay("FireCrawlAgent") ||
-      this.robots.getCrawlDelay("FirecrawlAgent");
+    const delay = this.robotsUserAgent
+      ? this.robots.getCrawlDelay(this.robotsUserAgent)
+      : this.robots.getCrawlDelay("FireCrawlAgent") ||
+        this.robots.getCrawlDelay("FirecrawlAgent");
     this.robotsCrawlDelay = delay !== undefined ? delay : null;
 
     const sitemaps = this.robots.getSitemaps();
@@ -598,13 +621,7 @@ export class WebCrawler {
             maxAge,
           ),
           ...robotsSitemaps.map(x =>
-            this.tryFetchSitemapLinks(
-              x,
-              _urlsHandler,
-              abort,
-              mock,
-              maxAge,
-            ),
+            this.tryFetchSitemapLinks(x, _urlsHandler, abort, mock, maxAge),
           ),
         ]).then(results => results.reduce((a, x) => a + x, 0)),
         timeoutPromise,
@@ -655,6 +672,7 @@ export class WebCrawler {
       excludes: this.excludes,
       ignoreRobotsTxt: this.ignoreRobotsTxt,
       robotsTxt: this.robotsTxt,
+      robotsUserAgent: this.robotsUserAgent,
       allowExternalContentLinks: this.allowExternalContentLinks,
       allowSubdomains: this.allowSubdomains,
     });
@@ -740,7 +758,13 @@ export class WebCrawler {
     url: string,
     ignoreRobotsTxt: boolean = false,
   ): boolean {
-    return ignoreRobotsTxt ? true : isUrlAllowedByRobots(url, this.robots);
+    return ignoreRobotsTxt
+      ? true
+      : isUrlAllowedByRobots(
+          url,
+          this.robots,
+          this.robotsUserAgent ? [this.robotsUserAgent] : undefined,
+        );
   }
 
   public isFile(url: string): boolean {
