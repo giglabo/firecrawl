@@ -2,13 +2,14 @@
 # our source is *present* and our schemas still *parse*; this proves the features
 # actually *work* end-to-end: a real scrape through the standalone playwright
 # engine, real scroll screenshots, real screenshot upload to S3/MinIO, the
-# configurable waitUntil, per-request proxy validation, byte tracking, and that
-# the async NuQ queue dispatches with no RabbitMQ, as we ship it.
+# configurable waitUntil, per-request proxy validation, byte tracking, DNA
+# extraction against a local fixture page, and that the async NuQ queue
+# dispatches with no RabbitMQ, as we ship it.
 #
 # It is a deliberately trimmed clone of upstream's `Server Test Suite`: the same
 # proven self-hosted boot (native lib, go html-to-md, playwright-service, local
 # test-site), but pinned to a single playwright/postgres config and running ONLY
-# our five snips. No AI / proxy / searxng / fire-engine, so it needs no secrets
+# our six snips. No AI / proxy / searxng / fire-engine, so it needs no secrets
 # (idmux falls back to a test identity when IDMUX_URL is unset).
 name: Fork E2E
 
@@ -172,7 +173,7 @@ jobs:
       # The command MUST be `pnpm test:snips*` -- harness.ts only gates the command
       # on API readiness when command[1] startsWith "test:snips" (otherwise vitest
       # races the API boot and every request is ECONNREFUSED). `test:snips:fork`
-      # runs only our five snips; each self-gates on TEST_SUITE_SELF_HOSTED and a
+      # runs only our six snips; each self-gates on TEST_SUITE_SELF_HOSTED and a
       # reachable playwright microservice.
       - name: Run fork snips
         run: pnpm harness pnpm test:snips:fork

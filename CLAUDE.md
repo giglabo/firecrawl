@@ -35,7 +35,8 @@ We extend upstream with self-hosted branding, DNA extraction, scroll screenshots
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dna-script/` — DNA extraction scripts
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dnaScript.ts` — DNA script bundler
 - `apps/playwright-service-ts/helpers/dismiss_cookie_banners.ts` — cookie banner dismissal
-- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts`, `scrape-proxy.test.ts` — tests
+- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts`, `scrape-proxy.test.ts`, `scrape-bytes-downloaded.test.ts`, `scrape-async-queue.test.ts` — tests
+- `apps/test-site/public/dna.html` — static fixture page for the DNA snip (paired with `scrape-dna.test.ts`; assertions there are pinned to its tokens, 8px spacing grid and breakpoints)
 - `docker-compose.selfhost.yaml`, `docker-compose.selfhost-local.yaml`, `selfhost.sh`
 - Docs: `SELFHOST.md`, `BRANDING-SCRIPTS.md`, `DNA-SCRIPTS.md`, `SCREENSHOT-STORAGE.md`, `SCROLL-SCREENSHOTS.md`, `CUSTOM_IMAGES.md`
 
