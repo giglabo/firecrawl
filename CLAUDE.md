@@ -104,7 +104,21 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
    # POSTGRES_HOST to a non-"localhost" value -- otherwise harness.ts:823
    # starts its own broker and papers over broker-less bugs. See
    # src/__tests__/snips/v2/scrape-async-queue.test.ts.
+   # Also: `unset NUQ_RABBITMQ_URL` is not enough -- .env refills it. Export the
+   # empty string.
    ```
+
+   Two more traps when running the stack by hand, both of which look like
+   product bugs and are not:
+   - **Start playwright-service with `ALLOW_LOCAL_WEBHOOKS=true`.** It blocks
+     private addresses, so without it every scrape of the local test-site comes
+     back empty and each snip fails on missing content. CI sets the variable at
+     job level, so every step inherits it; locally it must be passed to the
+     playwright service too, not just the API.
+   - Screenshot snips need MinIO with **two** buckets: a public one
+     (`mc anonymous set download`) for the public-URL path and a private one for
+     the presigned tests, whose control assertion checks the unsigned URL is
+     refused. Against a public bucket a broken signer still returns 200.
 
 **Use the `merge-upstream` skill** (`.claude/skills/merge-upstream/`) to perform a merge — it derives the current conflict surface rather than describing a fixed one, and `reference/file-playbook.md` holds the per-file rules and known traps. `MERGE-GUIDE.md` is a **historical plan that was never executed** and is ~950 upstream commits stale; do not follow it.
 
