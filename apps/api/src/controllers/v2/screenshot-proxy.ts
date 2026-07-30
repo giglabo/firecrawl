@@ -22,12 +22,21 @@ export async function screenshotProxyController(
     return res.status(404).json({ success: false, error: "Not found" });
   }
 
-  const key = verifyScreenshotToken(req.params.token);
-  if (key === null) {
-    // Same response for malformed, mis-signed and unknown tokens -- do not let
-    // a caller distinguish "wrong signature" from "no such object".
+  const verdict = verifyScreenshotToken(req.params.token);
+  if (!verdict.ok) {
+    if (verdict.reason === "expired") {
+      // 410 only ever comes back for a genuinely signed token (the signature is
+      // checked first), so telling the caller its link aged out leaks nothing
+      // they could not already prove -- and lets them ask for a fresh scrape.
+      return res
+        .status(410)
+        .json({ success: false, error: "Screenshot link has expired" });
+    }
+    // Malformed, mis-signed and unknown all look the same: do not let a caller
+    // distinguish "wrong signature" from "no such object".
     return res.status(404).json({ success: false, error: "Not found" });
   }
+  const key = verdict.key;
 
   const provider = resolveProvider();
   if (!provider?.fetch) {

@@ -707,6 +707,10 @@ check(
   mustContain(`${API}/lib/storage/proxy-url.ts`, [
     "verifyScreenshotToken",
     "timingSafeEqual",
+    // Proxy links must stay expirable -- an unauthenticated token that never
+    // dies is readable forever once it leaks.
+    "expired",
+    "payload.exp",
   ]),
 );
 

@@ -17,6 +17,7 @@ import {
   ALLOW_TEST_SUITE_WEBSITE,
 } from "../lib";
 import { scrape, scrapeTimeout, idmux, Identity } from "./lib";
+import crypto from "crypto";
 
 let identity: Identity;
 
@@ -92,6 +93,48 @@ describeIf(
       const [prefix] = screenshotUrl.split("/v2/screenshot/");
       const res = await fetch(`${prefix}/v2/screenshot/not-a-token`);
       expect(res.status).toBe(404);
+    },
+    scrapeTimeout,
+  );
+
+  it("issues tokens that carry an expiry", () => {
+    const [, token] = screenshotUrl.split("/v2/screenshot/");
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[0], "base64url").toString(),
+    );
+
+    expect(payload.v).toBe(1);
+    expect(typeof payload.key).toBe("string");
+    // 0 would mean a permanent link; the suite runs with the default TTL.
+    expect(payload.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  // A validly signed but aged-out link must be refused, and distinguishably so
+  // -- 410 rather than 404, since only a real signature can reach this branch.
+  (process.env.SCREENSHOT_PROXY_SECRET ? it : it.skip)(
+    "rejects an expired but correctly signed token with 410",
+    async () => {
+      const [prefix, token] = screenshotUrl.split("/v2/screenshot/");
+      const key = JSON.parse(
+        Buffer.from(token.split(".")[0], "base64url").toString(),
+      ).key;
+
+      const expired = Buffer.from(
+        JSON.stringify({
+          v: 1,
+          key,
+          exp: Math.floor(Date.now() / 1000) - 60,
+        }),
+      ).toString("base64url");
+      const signature = crypto
+        .createHmac("sha256", process.env.SCREENSHOT_PROXY_SECRET!)
+        .update(expired)
+        .digest("base64url");
+
+      const res = await fetch(
+        `${prefix}/v2/screenshot/${expired}.${signature}`,
+      );
+      expect(res.status).toBe(410);
     },
     scrapeTimeout,
   );

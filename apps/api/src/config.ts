@@ -226,6 +226,10 @@ const configSchema = z.object({
   // used to sign object keys (same scheme as PARSE_UPLOAD_REF_SECRET).
   SCREENSHOT_PROXY_BASE_URL: z.string().url().optional(),
   SCREENSHOT_PROXY_SECRET: emptyStringAsUndefined(z.string().trim().min(1)),
+  // Lifetime of a proxy link, in seconds. 0 = never expires, which is an
+  // explicit choice rather than the default: the token is unauthenticated, so
+  // a leaked permanent link is readable forever.
+  SCREENSHOT_PROXY_URL_TTL: z.coerce.number().int().min(0).default(604800),
   SCREENSHOT_UPLOAD_CONCURRENCY: z.coerce
     .number()
     .int()
