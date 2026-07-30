@@ -86,14 +86,18 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
    (cd apps/api/native && pnpm install)             # napi build -> regenerates index.d.ts
    (cd apps/api && pnpm install --ignore-scripts && ./node_modules/.bin/tsc --noEmit)
    (cd apps/playwright-service-ts && pnpm install --ignore-scripts && ./node_modules/.bin/tsc --noEmit)
-   # e2e for the fork's five snips (self-hosted playwright path). CI runs this as
-   # the `Fork E2E` workflow (.github/workflows/fork-e2e.yml); locally:
-   pnpm harness pnpm exec vitest run \
-     src/__tests__/snips/v2/scrape-dna.test.ts \
-     src/__tests__/snips/v2/scrape-storage.test.ts \
-     src/__tests__/snips/v2/scrape-waituntil.test.ts \
-     src/__tests__/snips/v2/scrape-proxy.test.ts \
-     src/__tests__/snips/v2/scrape-bytes-downloaded.test.ts
+   # e2e for the fork's snips (self-hosted playwright path). CI runs this as the
+   # `Fork E2E` workflow (.github/workflows/fork-e2e.yml), which invokes
+   # `pnpm test:snips:fork` -- keep that script and this list in sync. Locally
+   # the harness only waits for the API when the wrapped command starts with
+   # `pnpm test:snips`, so prefer:
+   pnpm harness pnpm test:snips:fork
+   # Note: Fork E2E deliberately runs with NO rabbitmq service and no
+   # NUQ_RABBITMQ_URL, because that is what docker-compose.selfhost.yaml ships.
+   # Running the harness by hand reproduces that only if you also set
+   # POSTGRES_HOST to a non-"localhost" value -- otherwise harness.ts:823
+   # starts its own broker and papers over broker-less bugs. See
+   # src/__tests__/snips/v2/scrape-async-queue.test.ts.
    ```
 
 **Use the `merge-upstream` skill** (`.claude/skills/merge-upstream/`) to perform a merge — it derives the current conflict surface rather than describing a fixed one, and `reference/file-playbook.md` holds the per-file rules and known traps. `MERGE-GUIDE.md` is a **historical plan that was never executed** and is ~950 upstream commits stale; do not follow it.
