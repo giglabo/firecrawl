@@ -61,7 +61,11 @@ jobs:
   build-api:
     needs: detect-changes
     if: needs.detect-changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
+    # Native runner per architecture. arm64 used to build on an amd64 runner under
+    # QEMU, which took ~65min of the ~68min tag build (the API image compiles the
+    # Rust napi lib and the Go html-to-md shared lib). ubuntu-24.04-arm is free for
+    # public repos.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
@@ -75,10 +79,6 @@ jobs:
 
       - uses: actions/checkout@v4
         if: env.SKIP != 'true'
-
-      - name: Set up QEMU
-        if: env.SKIP != 'true' && matrix.platform != 'linux/amd64'
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         if: env.SKIP != 'true'
@@ -155,7 +155,8 @@ jobs:
   build-playwright:
     needs: detect-changes
     if: needs.detect-changes.outputs.playwright == 'true'
-    runs-on: ubuntu-latest
+    # See build-api: native arm64 runner instead of QEMU emulation.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
@@ -169,10 +170,6 @@ jobs:
 
       - uses: actions/checkout@v4
         if: env.SKIP != 'true'
-
-      - name: Set up QEMU
-        if: env.SKIP != 'true' && matrix.platform != 'linux/amd64'
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         if: env.SKIP != 'true'
