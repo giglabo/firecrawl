@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DNA Fixture — Design System Sample</title>
+    <meta
+      name="description"
+      content="A deliberately rich page used to exercise every DNA extraction module deterministically."
+    />
+
+    <!-- Populates fonts.hints (link[rel=preload][as=font] and link[rel=preconnect]) -->
+    <link
+      rel="preload"
+      href="/fonts/atkinson-regular.woff"
+      as="font"
+      type="font/woff"
+      crossorigin
+    />
+    <link rel="preconnect" href="https://fonts.example.com" />
+
+    <style>
+      /* ---------------------------------------------------------------
+         This page is a TEST FIXTURE for DNA extraction, not a demo page.
+         Every block below feeds a specific module of the DNA script; see
+         apps/api/src/scraper/scrapeURL/engines/fire-engine/dna-script/.
+         Keep it self-contained (no external CSS) so extraction is
+         deterministic and offline. If you change a value here, check
+         scrape-dna.test.ts -- several assertions are pinned to it.
+         --------------------------------------------------------------- */
+
+      /* fonts.fontFaces + fonts.loadedFonts. Real files under public/fonts,
+         so these actually load rather than sitting unresolved. */
+      @font-face {
+        font-family: "Atkinson";
+        src: url("/fonts/atkinson-regular.woff") format("woff");
+        font-weight: 400;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Atkinson";
+        src: url("/fonts/atkinson-bold.woff") format("woff");
+        font-weight: 700;
+        font-display: swap;
+      }
+
+      /* customProperties: 20 tokens, all resolvable. Spacing tokens are a
+         strict 8px scale so spacing.detectedBase resolves to 8, not 1. */
+      :root {
+        --color-bg: #ffffff;
+        --color-surface: #f4f6f8;
+        --color-border: #d8dee4;
+        --color-text: #14181f;
+        --color-text-muted: #5b6672;
+        --color-primary: #1f6feb;
+        --color-primary-dark: #124a9e;
+        --color-accent: #d94f70;
+        --color-success: #1a7f4b;
+        --color-warning: #b8860b;
+
+        --space-1: 8px;
+        --space-2: 16px;
+        --space-3: 24px;
+        --space-4: 32px;
+        --space-6: 48px;
+
+        --radius-sm: 4px;
+        --radius-md: 8px;
+        --font-sans: "Atkinson", system-ui, sans-serif;
+        --font-mono: ui-monospace, "SFMono-Regular", monospace;
+        --shadow-card: 0 1px 2px rgba(20, 24, 31, 0.08);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--color-bg);
+        color: var(--color-text);
+        font-family: var(--font-sans);
+        font-size: 16px;
+        font-weight: 400;
+        line-height: 1.6;
+      }
+
+      /* typography: each rule below is a distinct
+         family/size/weight/line-height combination. */
+      h1 {
+        font-size: 40px;
+        font-weight: 700;
+        line-height: 1.15;
+        margin: 0 0 var(--space-3);
+      }
+      h2 {
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1.25;
+        margin: 0 0 var(--space-2);
+      }
+      h3 {
+        font-size: 24px;
+        font-weight: 600;
+        line-height: 1.3;
+        margin: 0 0 var(--space-2);
+      }
+      h4 {
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1.35;
+        margin: 0 0 var(--space-1);
+      }
+      h5 {
+        font-size: 18px;
+        font-weight: 500;
+        line-height: 1.4;
+        margin: 0 0 var(--space-1);
+      }
+      h6 {
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 1.45;
+        margin: 0 0 var(--space-1);
+        text-transform: uppercase;
+        color: var(--color-text-muted);
+      }
+      p {
+        margin: 0 0 var(--space-2);
+      }
+      small {
+        font-size: 13px;
+        font-weight: 400;
+        line-height: 1.5;
+        color: var(--color-text-muted);
+      }
+      code {
+        font-family: var(--font-mono);
+        font-size: 14px;
+        font-weight: 400;
+        line-height: 1.5;
+        background: var(--color-surface);
+        padding: 2px var(--space-1);
+        border-radius: var(--radius-sm);
+      }
+      figcaption {
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.4;
+        color: var(--color-text-muted);
+      }
+
+      /* sections: layout containers with real dimensions and children. */
+      .page {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: var(--space-4) var(--space-3);
+      }
+      header.site-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+        padding: var(--space-2) var(--space-3);
+        background: var(--color-surface);
+        border-bottom: 1px solid var(--color-border);
+      }
+      nav.primary ul,
+      nav.secondary ul {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      nav.primary a,
+      nav.secondary a {
+        color: var(--color-primary);
+        text-decoration: none;
+      }
+      section {
+        padding: var(--space-4) 0;
+        border-bottom: 1px solid var(--color-border);
+      }
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: var(--space-3);
+      }
+      .card {
+        padding: var(--space-3);
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-card);
+      }
+
+      /* components.buttons + components.inputs */
+      .btn {
+        display: inline-block;
+        padding: var(--space-1) var(--space-3);
+        font-size: 16px;
+        font-weight: 600;
+        border: 1px solid transparent;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+      }
+      .btn-primary {
+        background: var(--color-primary);
+        color: var(--color-bg);
+      }
+      .btn-secondary {
+        background: transparent;
+        color: var(--color-primary);
+        border-color: var(--color-primary);
+      }
+      .btn-accent {
+        background: var(--color-accent);
+        color: var(--color-bg);
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+        margin-bottom: var(--space-2);
+      }
+      input[type="text"],
+      input[type="email"],
+      textarea,
+      select {
+        padding: var(--space-1) var(--space-2);
+        font-size: 16px;
+        color: var(--color-text);
+        background: var(--color-bg);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm);
+      }
+
+      /* hoverStates */
+      .btn-primary:hover {
+        background: var(--color-primary-dark);
+      }
+      .btn-secondary:hover {
+        background: var(--color-surface);
+      }
+      .card:hover {
+        box-shadow: 0 4px 12px rgba(20, 24, 31, 0.14);
+      }
+      nav.primary a:hover {
+        text-decoration: underline;
+      }
+
+      /* animations.keyframes + animations.animatedElements */
+      @keyframes dna-fade-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes dna-pulse {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.04);
+        }
+      }
+      .animated-banner {
+        animation: dna-fade-in 600ms ease-out both;
+      }
+      .animated-badge {
+        animation: dna-pulse 2s ease-in-out infinite;
+        display: inline-block;
+        padding: 2px var(--space-1);
+        background: var(--color-success);
+        color: var(--color-bg);
+        border-radius: var(--radius-sm);
+      }
+
+      /* mediaQueries: four ascending px breakpoints. */
+      @media (min-width: 480px) {
+        .page {
+          padding: var(--space-4);
+        }
+      }
+      @media (min-width: 768px) {
+        .card-grid {
+          gap: var(--space-4);
+        }
+      }
+      @media (min-width: 1024px) {
+        .page {
+          padding: var(--space-6) var(--space-4);
+        }
+      }
+      @media (min-width: 1280px) {
+        h1 {
+          font-size: 48px;
+        }
+      }
+
+      footer.site-footer {
+        padding: var(--space-4) var(--space-3);
+        background: var(--color-surface);
+        border-top: 1px solid var(--color-border);
+        color: var(--color-text-muted);
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- navLinks aggregates <nav> and <header> links, deduped by text.
+         12 unique labels here keeps the >10 assertion honest. -->
+    <header class="site-header">
+      <strong>DNA Fixture</strong>
+      <nav class="primary" aria-label="Primary">
+        <ul>
+          <li><a href="/dna.html#overview">Overview</a></li>
+          <li><a href="/dna.html#tokens">Tokens</a></li>
+          <li><a href="/dna.html#typography">Typography</a></li>
+          <li><a href="/dna.html#palette">Palette</a></li>
+          <li><a href="/dna.html#spacing">Spacing</a></li>
+          <li><a href="/dna.html#components">Components</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <div class="page">
+      <section id="overview" class="animated-banner">
+        <h1>Design System Fixture</h1>
+        <p>
+          This page exists to give the DNA extractor a stable, offline target
+          with a known design system. <span class="animated-badge">stable</span>
+        </p>
+        <p>
+          <button class="btn btn-primary" type="button">Get started</button>
+          <button class="btn btn-secondary" type="button">Read the docs</button>
+          <a class="btn btn-accent" href="/dna.html#components">See components</a>
+        </p>
+      </section>
+
+      <section id="tokens">
+        <h2>Design tokens</h2>
+        <h3>Colour and spacing scales</h3>
+        <p>
+          Tokens are declared as custom properties on <code>:root</code> and
+          referenced everywhere, so raw and resolved values both exist.
+        </p>
+        <figure>
+          <div class="card-grid">
+            <div class="card">
+              <h4>Colour</h4>
+              <small>Ten semantic colour tokens.</small>
+            </div>
+            <div class="card">
+              <h4>Spacing</h4>
+              <small>A strict 8px scale.</small>
+            </div>
+            <div class="card">
+              <h4>Radius</h4>
+              <small>Two corner radii.</small>
+            </div>
+          </div>
+          <figcaption>Token groups used across the fixture.</figcaption>
+        </figure>
+      </section>
+
+      <section id="typography">
+        <h2>Typography</h2>
+        <h3>Heading scale</h3>
+        <h4>Fourth level</h4>
+        <h5>Fifth level</h5>
+        <h6>Sixth level</h6>
+        <p>
+          Body copy at 16px with a 1.6 line height, plus <small>small print</small>
+          and inline <code>monospace</code>.
+        </p>
+      </section>
+
+      <section id="palette">
+        <h2>Palette</h2>
+        <div class="card-grid">
+          <div class="card"><h4>Primary</h4><small>#1f6feb</small></div>
+          <div class="card"><h4>Accent</h4><small>#d94f70</small></div>
+          <div class="card"><h4>Success</h4><small>#1a7f4b</small></div>
+        </div>
+      </section>
+
+      <section id="spacing">
+        <h2>Spacing</h2>
+        <p>
+          Every margin, padding and gap on this page is a multiple of 8px, which
+          is what the spacing module should detect as the base unit.
+        </p>
+      </section>
+
+      <section id="components">
+        <h2>Components</h2>
+        <h3>Form controls</h3>
+        <form>
+          <div class="field">
+            <label for="dna-name">Name</label>
+            <input id="dna-name" type="text" name="name" placeholder="Ada Lovelace" />
+          </div>
+          <div class="field">
+            <label for="dna-email">Email</label>
+            <input id="dna-email" type="email" name="email" placeholder="ada@example.com" />
+          </div>
+          <div class="field">
+            <label for="dna-plan">Plan</label>
+            <select id="dna-plan" name="plan">
+              <option>Starter</option>
+              <option>Growth</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="dna-notes">Notes</label>
+            <textarea id="dna-notes" name="notes" rows="3"></textarea>
+          </div>
+          <button class="btn btn-primary" type="button">Save preferences</button>
+        </form>
+
+        <nav class="secondary" aria-label="Secondary">
+          <ul>
+            <li><a href="/dna.html#tokens">Token reference</a></li>
+            <li><a href="/dna.html#typography">Type scale</a></li>
+            <li><a href="/dna.html#palette">Colour roles</a></li>
+            <li><a href="/dna.html#spacing">Spacing rules</a></li>
+            <li><a href="/dna.html#overview">Back to top</a></li>
+            <li><a href="/index.html">Site home</a></li>
+          </ul>
+        </nav>
+      </section>
+    </div>
+
+    <!-- footerText must be substantial page-level text, not a card timestamp. -->
+    <footer class="site-footer">
+      <p>
+        This fixture page is part of the Firecrawl test site. It is served
+        locally during end-to-end runs and is not a real product page. Its
+        markup and styles are pinned by scrape-dna.test.ts.
+      </p>
+      <small>Fixture &mdash; no real content, no external requests.</small>
+    </footer>
+  </body>
+</html>

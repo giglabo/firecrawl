@@ -1,5 +1,21 @@
-import { TEST_SELF_HOST, HAS_PLAYWRIGHT } from "../lib";
-import { scrape, scrapeRaw, scrapeTimeout, idmux, Identity } from "./lib";
+// DNA extraction, exercised against a fixture page we control.
+//
+// This used to point at https://www.theguardian.com/europe, which made it
+// unrunnable in CI (network-dependent and free to change under us) -- commit
+// 09e1dedea dropped it from `test:snips:fork` for exactly that reason. It now
+// targets apps/test-site/public/dna.html, a static page built to feed every
+// DNA module, so the assertions below can pin real values instead of guessing
+// at thresholds a news site happened to clear.
+//
+// The fixture and this file are a pair: if you change one, change the other.
+import {
+  describeIf,
+  TEST_SELF_HOST,
+  HAS_PLAYWRIGHT,
+  ALLOW_TEST_SUITE_WEBSITE,
+  TEST_SUITE_WEBSITE,
+} from "../lib";
+import { scrapeRaw, scrapeTimeout, idmux, Identity } from "./lib";
 
 let identity: Identity;
 
@@ -11,20 +27,18 @@ beforeAll(async () => {
   });
 }, 10000 + scrapeTimeout);
 
-// DNA extraction requires fire-engine (chrome-cdp) or playwright
-// Gate: skip in self-hosted unless playwright is available
-const CAN_RUN_DNA = !process.env.TEST_SUITE_SELF_HOSTED || HAS_PLAYWRIGHT;
+// DNA extraction needs a JS-executing engine: fire-engine (chrome-cdp) in
+// production, the standalone playwright engine self-hosted.
+const CAN_RUN_DNA =
+  (!TEST_SELF_HOST || HAS_PLAYWRIGHT) && ALLOW_TEST_SUITE_WEBSITE;
 
-const TEST_URL = "https://www.theguardian.com/europe";
+const TEST_URL = `${TEST_SUITE_WEBSITE}/dna.html`;
 
-describe("DNA extraction", () => {
+describeIf(CAN_RUN_DNA)("DNA extraction", () => {
   describe("Happy path — skipProcessor: true", () => {
     let dna: any;
-    let scrapeSucceeded = false;
 
     beforeAll(async () => {
-      if (!CAN_RUN_DNA) return;
-
       const raw = await scrapeRaw(
         {
           url: TEST_URL,
@@ -33,36 +47,51 @@ describe("DNA extraction", () => {
         identity,
       );
 
-      if (raw.statusCode === 200 && raw.body.success) {
-        dna = raw.body.data.dna;
-        scrapeSucceeded = true;
+      // Fail loudly. The previous version swallowed a failed scrape and let
+      // every assertion below pass vacuously.
+      if (raw.statusCode !== 200 || !raw.body.success) {
+        throw new Error(
+          `DNA scrape failed (${raw.statusCode}): ${JSON.stringify(raw.body).slice(0, 400)}`,
+        );
       }
+      dna = raw.body.data.dna;
     }, scrapeTimeout);
 
-    const shouldRun = () => CAN_RUN_DNA && scrapeSucceeded;
-
     it("returns dna field on the document", () => {
-      if (!shouldRun()) return;
       expect(dna).toBeDefined();
       expect(typeof dna).toBe("object");
     });
 
-    it("has top-level metadata (url, timestamp, viewport)", () => {
-      if (!shouldRun()) return;
-      expect(typeof dna.url).toBe("string");
-      expect(dna.url).toContain("theguardian.com");
-      expect(typeof dna.timestamp).toBe("string");
-      expect(dna.viewport).toBeDefined();
-      expect(typeof dna.viewport.width).toBe("number");
-      expect(typeof dna.viewport.height).toBe("number");
+    // dedupAndTrim() nests these under _meta; the previous version of this test
+    // asserted dna.url / dna.timestamp / dna.viewport, which never existed. It
+    // went unnoticed because the old guard turned a failed scrape into a silent
+    // pass and the file was excluded from CI.
+    it("has metadata under _meta (url, timestamp, viewport)", () => {
+      expect(dna._meta).toBeDefined();
+      expect(typeof dna._meta.url).toBe("string");
+      expect(dna._meta.url).toContain("/dna.html");
+      expect(typeof dna._meta.timestamp).toBe("string");
+      expect(dna._meta.viewport).toBeDefined();
+      expect(typeof dna._meta.viewport.width).toBe("number");
+      expect(typeof dna._meta.viewport.height).toBe("number");
     });
 
-    // Module 1: Custom properties
+    it("reports dedup counts for buttons, sections and hover rules", () => {
+      expect(dna._meta.dedup).toBeDefined();
+      for (const key of ["buttons", "sections", "hoverRules"] as const) {
+        expect(typeof dna._meta.dedup[key].raw).toBe("number");
+        expect(typeof dna._meta.dedup[key].unique).toBe("number");
+        expect(dna._meta.dedup[key].unique).toBeLessThanOrEqual(
+          dna._meta.dedup[key].raw,
+        );
+      }
+    });
+
+    // Module 1: Custom properties — fixture declares 20 on :root.
     it("extracts customProperties as an object with --* keys", () => {
-      if (!shouldRun()) return;
       expect(typeof dna.customProperties).toBe("object");
       const keys = Object.keys(dna.customProperties);
-      expect(keys.length).toBeGreaterThan(10);
+      expect(keys.length).toBeGreaterThanOrEqual(20);
       for (const [key, val] of Object.entries(dna.customProperties)) {
         expect(key.startsWith("--")).toBe(true);
         expect((val as any).raw).toBeDefined();
@@ -70,9 +99,16 @@ describe("DNA extraction", () => {
       }
     });
 
-    // Module 2: Typography
+    it("resolves specific design tokens from the fixture", () => {
+      expect(dna.customProperties["--color-primary"]).toBeDefined();
+      expect(dna.customProperties["--color-primary"].resolved).toContain(
+        "#1f6feb",
+      );
+      expect(dna.customProperties["--space-1"].resolved).toContain("8px");
+    });
+
+    // Module 2: Typography — h1..h6, p, small, code, figcaption.
     it("extracts typography with full metrics", () => {
-      if (!shouldRun()) return;
       expect(Array.isArray(dna.typography)).toBe(true);
       expect(dna.typography.length).toBeGreaterThan(5);
 
@@ -86,7 +122,6 @@ describe("DNA extraction", () => {
 
     // Module 3: Colors
     it("extracts colors with usage mapping", () => {
-      if (!shouldRun()) return;
       expect(Array.isArray(dna.colors)).toBe(true);
       expect(dna.colors.length).toBeGreaterThan(5);
 
@@ -96,36 +131,34 @@ describe("DNA extraction", () => {
       expect(Array.isArray(color.tags)).toBe(true);
       expect(typeof color.count).toBe("number");
 
-      // At least one color should have property tracking
       const withProperties = dna.colors.filter(
         (c: any) => c.properties.length > 0,
       );
       expect(withProperties.length).toBeGreaterThan(0);
     });
 
-    // Module 4: Spacing
+    // Module 4: Spacing — the fixture is a strict 8px grid.
     it("extracts spacing with detectedBase (GCD) and frequencyMap", () => {
-      if (!shouldRun()) return;
       expect(dna.spacing).toBeDefined();
       expect(typeof dna.spacing.detectedBase).toBe("number");
-      expect(dna.spacing.detectedBase).toBeGreaterThan(0);
+      expect(dna.spacing.detectedBase).toBe(8);
       expect(Array.isArray(dna.spacing.frequencyMap)).toBe(true);
       expect(dna.spacing.frequencyMap.length).toBeGreaterThan(3);
       expect(typeof dna.spacing.frequencyMap[0].value).toBe("number");
       expect(typeof dna.spacing.frequencyMap[0].count).toBe("number");
     });
 
-    // Module 5: Animations
+    // Module 5: Animations — two @keyframes, two animated elements.
     it("extracts animations (keyframes + animatedElements)", () => {
-      if (!shouldRun()) return;
       expect(dna.animations).toBeDefined();
       expect(Array.isArray(dna.animations.keyframes)).toBe(true);
       expect(Array.isArray(dna.animations.animatedElements)).toBe(true);
+      expect(dna.animations.keyframes.length).toBeGreaterThanOrEqual(2);
+      expect(dna.animations.animatedElements.length).toBeGreaterThan(0);
     });
 
-    // Module 6: Sections
+    // Module 6: Sections — six <section> elements plus header/footer.
     it("extracts layout sections with children summaries", () => {
-      if (!shouldRun()) return;
       expect(Array.isArray(dna.sections)).toBe(true);
       expect(dna.sections.length).toBeGreaterThan(3);
 
@@ -137,100 +170,84 @@ describe("DNA extraction", () => {
       expect(section.visual).toBeDefined();
       expect(section.dimensions).toBeDefined();
 
-      // At least one section should have childrenSummary
       const withChildren = dna.sections.filter(
         (s: any) => s.childrenSummary && s.childrenSummary.length > 0,
       );
       expect(withChildren.length).toBeGreaterThan(0);
     });
 
-    // Module 7: Components
+    // Module 7: Components — four buttons, four form controls.
     it("extracts buttons and inputs", () => {
-      if (!shouldRun()) return;
       expect(dna.components).toBeDefined();
       expect(Array.isArray(dna.components.buttons)).toBe(true);
       expect(Array.isArray(dna.components.inputs)).toBe(true);
       expect(dna.components.buttons.length).toBeGreaterThan(0);
+      // input[type=text], input[type=email], select, textarea
+      expect(dna.components.inputs.length).toBeGreaterThanOrEqual(4);
     });
 
     // Module 8: Hover states
     it("extracts hover CSS rules", () => {
-      if (!shouldRun()) return;
       expect(Array.isArray(dna.hoverStates)).toBe(true);
       expect(dna.hoverStates.length).toBeGreaterThan(0);
       expect(typeof dna.hoverStates[0].selector).toBe("string");
       expect(typeof dna.hoverStates[0].properties).toBe("object");
     });
 
-    // Module 9: Media queries
+    // Module 9: Media queries — fixture declares exactly these, ascending.
     it("extracts responsive breakpoints sorted ascending", () => {
-      if (!shouldRun()) return;
       expect(Array.isArray(dna.mediaQueries)).toBe(true);
-      expect(dna.mediaQueries.length).toBeGreaterThan(2);
-      for (const bp of dna.mediaQueries) {
-        expect(typeof bp).toBe("number");
-      }
-      // Should be sorted ascending
-      for (let i = 1; i < dna.mediaQueries.length; i++) {
-        expect(dna.mediaQueries[i]).toBeGreaterThanOrEqual(
-          dna.mediaQueries[i - 1],
-        );
-      }
+      expect(dna.mediaQueries).toEqual([480, 768, 1024, 1280]);
     });
 
     // Module 10: Content
     it("extracts content metadata, headings, CTAs, navLinks", () => {
-      if (!shouldRun()) return;
       expect(dna.content).toBeDefined();
       expect(dna.content.meta).toBeDefined();
-      expect(typeof dna.content.meta.title).toBe("string");
-      expect(dna.content.meta.title.length).toBeGreaterThan(0);
+      expect(dna.content.meta.title).toContain("DNA Fixture");
       expect(Array.isArray(dna.content.headings)).toBe(true);
       expect(dna.content.headings.length).toBeGreaterThan(0);
+      expect(dna.content.headings[0].text).toContain("Design System Fixture");
       expect(Array.isArray(dna.content.ctas)).toBe(true);
+      expect(dna.content.ctas.length).toBeGreaterThan(0);
       expect(Array.isArray(dna.content.navLinks)).toBe(true);
-      expect(dna.content.navLinks.length).toBeGreaterThan(0);
     });
 
-    // Module 11: Fonts
+    // Module 11: Fonts — real .woff files, so these actually load.
     it("extracts font faces, loaded fonts, and hints", () => {
-      if (!shouldRun()) return;
       expect(dna.fonts).toBeDefined();
       expect(Array.isArray(dna.fonts.fontFaces)).toBe(true);
       expect(Array.isArray(dna.fonts.loadedFonts)).toBe(true);
       expect(Array.isArray(dna.fonts.hints)).toBe(true);
       expect(dna.fonts.fontFaces.length).toBeGreaterThan(0);
       expect(dna.fonts.loadedFonts.length).toBeGreaterThan(0);
+      expect(
+        dna.fonts.fontFaces.some((f: any) => f.family.includes("Atkinson")),
+      ).toBe(true);
     });
 
-    // No errors
     it("has no extraction errors", () => {
-      if (!shouldRun()) return;
       if (dna.errors) {
         expect(dna.errors).toEqual([]);
       }
     });
 
-    // Gap analysis quality checks
+    // Gap analysis: a naive GCD over mixed values collapses to 1.
     it("spacing detectedBase is >= 4 (not 1 from naive GCD)", () => {
-      if (!shouldRun()) return;
       expect(dna.spacing.detectedBase).toBeGreaterThanOrEqual(4);
     });
 
     it("footerText is substantial page-level footer (not a card timestamp)", () => {
-      if (!shouldRun()) return;
-      if (dna.content.footerText) {
-        expect(dna.content.footerText.length).toBeGreaterThan(30);
-      }
+      expect(dna.content.footerText).toBeTruthy();
+      expect(dna.content.footerText.length).toBeGreaterThan(30);
+      expect(dna.content.footerText).toContain("fixture");
     });
 
     it("navLinks aggregates from all nav elements (deduped)", () => {
-      if (!shouldRun()) return;
+      // 6 primary + 6 secondary, all distinct labels.
       expect(dna.content.navLinks.length).toBeGreaterThan(10);
-      // Check no duplicate link texts
       const texts = dna.content.navLinks.map((l: any) => l.text);
-      const unique = new Set(texts);
-      expect(unique.size).toBe(texts.length);
+      expect(new Set(texts).size).toBe(texts.length);
     });
   });
 
@@ -238,8 +255,6 @@ describe("DNA extraction", () => {
     it.concurrent(
       "works alongside markdown format",
       async () => {
-        if (!CAN_RUN_DNA) return;
-
         const raw = await scrapeRaw(
           {
             url: TEST_URL,
@@ -248,11 +263,8 @@ describe("DNA extraction", () => {
           identity,
         );
 
-        if (raw.statusCode !== 200) return; // engine unavailable
-
-        expect(raw.body.data.markdown).toBeDefined();
+        expect(raw.statusCode).toBe(200);
         expect(typeof raw.body.data.markdown).toBe("string");
-        expect(raw.body.data.dna).toBeDefined();
         expect(typeof raw.body.data.dna).toBe("object");
       },
       scrapeTimeout,
@@ -261,8 +273,6 @@ describe("DNA extraction", () => {
     it.concurrent(
       "works alongside screenshot format",
       async () => {
-        if (!CAN_RUN_DNA) return;
-
         const raw = await scrapeRaw(
           {
             url: TEST_URL,
@@ -274,11 +284,8 @@ describe("DNA extraction", () => {
           identity,
         );
 
-        if (raw.statusCode !== 200) return; // engine unavailable
-
-        expect(raw.body.data.screenshot).toBeDefined();
+        expect(raw.statusCode).toBe(200);
         expect(typeof raw.body.data.screenshot).toBe("string");
-        expect(raw.body.data.dna).toBeDefined();
         expect(typeof raw.body.data.dna).toBe("object");
       },
       scrapeTimeout,
@@ -297,9 +304,9 @@ describe("DNA extraction", () => {
           identity,
         );
 
-        // Zod strips unknown fields by default, so this should succeed (or 422)
-        // But engine may also fail — allow 500 from engine issues
-        expect([200, 422, 500]).toContain(raw.statusCode);
+        // Zod strips unknown fields, so this succeeds; 422 is also acceptable
+        // if the schema is tightened later.
+        expect([200, 422]).toContain(raw.statusCode);
       },
       scrapeTimeout,
     );
