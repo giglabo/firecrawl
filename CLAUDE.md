@@ -40,7 +40,7 @@ The proxy token is `base64url(JSON payload) + "." + base64url(HMAC-SHA256)`, the
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dna-script/` — DNA extraction scripts
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dnaScript.ts` — DNA script bundler
 - `apps/playwright-service-ts/helpers/dismiss_cookie_banners.ts` — cookie banner dismissal
-- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts`, `scrape-proxy.test.ts`, `scrape-bytes-downloaded.test.ts`, `scrape-async-queue.test.ts`, `scrape-screenshot-url.test.ts` — tests
+- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts`, `scrape-proxy.test.ts`, `scrape-bytes-downloaded.test.ts`, `scrape-async-queue.test.ts`, `scrape-screenshot-url.test.ts`, `scrape-screenshot-local.test.ts` — tests
 - `apps/test-site/public/dna.html` — static fixture page for the DNA snip (paired with `scrape-dna.test.ts`; assertions there are pinned to its tokens, 8px spacing grid and breakpoints)
 - `docker-compose.selfhost.yaml`, `docker-compose.selfhost-local.yaml`, `selfhost.sh`
 - Docs: `SELFHOST.md`, `BRANDING-SCRIPTS.md`, `DNA-SCRIPTS.md`, `SCREENSHOT-STORAGE.md`, `SCROLL-SCREENSHOTS.md`, `CUSTOM_IMAGES.md`
@@ -85,7 +85,7 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
 
 7. **After merge, verify:**
    ```bash
-   node scripts/verify-fork-invariants.mjs          # 51 checks; must be 51/51
+   node scripts/verify-fork-invariants.mjs          # 53 checks; must be 53/53
    # tsc needs the native lib built first, otherwise every `@mendable/firecrawl-rs`
    # import is a false "Cannot find module" error (the napi .d.ts is regenerated
    # by the build). Build it, then typecheck:

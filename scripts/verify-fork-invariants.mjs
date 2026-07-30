@@ -716,6 +716,16 @@ check(
 
 check(
   "screenshot-url",
+  "local-traversal-guard",
+  "local provider refuses keys escaping its directory",
+  mustContain(`${API}/lib/storage/providers/local.provider.ts`, [
+    "path.resolve",
+    "path.sep",
+  ]),
+);
+
+check(
+  "screenshot-url",
   "url-mode",
   "SCREENSHOT_STORAGE_URL_MODE offers public/signed/proxy",
   mustContain(`${API}/config.ts`, [
@@ -732,6 +742,7 @@ for (const name of [
   "scrape-bytes-downloaded",
   "scrape-async-queue",
   "scrape-screenshot-url",
+  "scrape-screenshot-local",
 ]) {
   check("tests", `snips:${name}`, `${name}.test.ts exists`, () =>
     fileExists(`${API}/__tests__/snips/v2/${name}.test.ts`)

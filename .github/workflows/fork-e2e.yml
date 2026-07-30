@@ -213,6 +213,20 @@ jobs:
         env:
           npm_config_ignore_scripts: "true"
 
+      # Second harness boot, this time with the LOCAL storage provider, to cover
+      # its fetch() and path-traversal guard -- the S3 run above cannot reach
+      # them. Cheap: deps, native lib and browsers are already in place, so this
+      # is an API restart rather than another full setup.
+      - name: Run local-storage screenshot snip
+        run: pnpm harness pnpm test:snips:fork-local
+        working-directory: apps/api
+        env:
+          npm_config_ignore_scripts: "true"
+          SCREENSHOT_STORAGE_PROVIDER: local
+          SCREENSHOT_STORAGE_LOCAL_DIR: ${{ runner.temp }}/fc-screenshots
+          SCREENSHOT_STORAGE_URL_MODE: proxy
+          SCREENSHOT_PROXY_BASE_URL: http://127.0.0.1:3002
+
       - name: Dump service logs on failure
         if: failure()
         run: |
