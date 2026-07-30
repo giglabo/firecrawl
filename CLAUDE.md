@@ -28,14 +28,17 @@ This is a fork of `mendableai/firecrawl` (upstream). Our remote layout:
 
 ### Our custom features (must survive merges)
 
-We extend upstream with self-hosted branding, DNA extraction, scroll screenshots, pluggable storage, configurable `waitUntil`, and per-request proxy for playwright. All features use **existing upstream API endpoints** (`POST /v1/scrape`, `POST /v2/scrape`) — no new public routes. Changes are additive request/response fields.
+We extend upstream with self-hosted branding, DNA extraction, scroll screenshots, pluggable storage, configurable `waitUntil`, and per-request proxy for playwright. Almost everything uses **existing upstream API endpoints** (`POST /v1/scrape`, `POST /v2/scrape`) as additive request/response fields.
+
+**One deliberate exception:** `GET /v2/screenshot/:token` (screenshot proxy). Screenshot URLs assume a world-readable bucket — an assumption inherited from the deleted Supabase implementation. `SCREENSHOT_STORAGE_URL_MODE` picks how the URL is produced: `public` (bare object URL, the old behaviour), `signed` (presigned S3, bucket stays private, link expires) or `proxy` (this route streams the object back; private bucket, no expiry). Proxy mode applies only to the **env-configured** provider — a per-request `storage` block keeps its own URL, because the route resolves storage from env and would otherwise read from the wrong bucket. The token is an HMAC over the object key using the same construction as upstream's `PARSE_UPLOAD_REF_SECRET`; it authorises one object and is not an API key.
 
 **New files (ours, no conflict risk):**
-- `apps/api/src/lib/storage/` — pluggable screenshot storage (S3/MinIO, local filesystem)
+- `apps/api/src/lib/storage/` — pluggable screenshot storage (S3/MinIO, local filesystem), incl. `proxy-url.ts` (HMAC-signed screenshot tokens)
+- `apps/api/src/controllers/v2/screenshot-proxy.ts` — serves screenshots for `SCREENSHOT_STORAGE_URL_MODE=proxy`
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dna-script/` — DNA extraction scripts
 - `apps/api/src/scraper/scrapeURL/engines/fire-engine/dnaScript.ts` — DNA script bundler
 - `apps/playwright-service-ts/helpers/dismiss_cookie_banners.ts` — cookie banner dismissal
-- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts`, `scrape-proxy.test.ts`, `scrape-bytes-downloaded.test.ts`, `scrape-async-queue.test.ts` — tests
+- `apps/api/src/__tests__/snips/v2/scrape-dna.test.ts`, `scrape-storage.test.ts`, `scrape-waituntil.test.ts`, `scrape-proxy.test.ts`, `scrape-bytes-downloaded.test.ts`, `scrape-async-queue.test.ts`, `scrape-screenshot-url.test.ts` — tests
 - `apps/test-site/public/dna.html` — static fixture page for the DNA snip (paired with `scrape-dna.test.ts`; assertions there are pinned to its tokens, 8px spacing grid and breakpoints)
 - `docker-compose.selfhost.yaml`, `docker-compose.selfhost-local.yaml`, `selfhost.sh`
 - Docs: `SELFHOST.md`, `BRANDING-SCRIPTS.md`, `DNA-SCRIPTS.md`, `SCREENSHOT-STORAGE.md`, `SCROLL-SCREENSHOTS.md`, `CUSTOM_IMAGES.md`
@@ -80,7 +83,7 @@ Always merge (not rebase) upstream into our branch: `git merge origin/main`.
 
 7. **After merge, verify:**
    ```bash
-   node scripts/verify-fork-invariants.mjs          # 46 checks; must be 46/46
+   node scripts/verify-fork-invariants.mjs          # 51 checks; must be 51/51
    # tsc needs the native lib built first, otherwise every `@mendable/firecrawl-rs`
    # import is a false "Cannot find module" error (the napi .d.ts is regenerated
    # by the build). Build it, then typecheck:

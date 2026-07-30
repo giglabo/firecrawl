@@ -202,6 +202,30 @@ const configSchema = z.object({
   SCREENSHOT_STORAGE_S3_FORCE_PATH_STYLE: z.stringbool().optional(),
   SCREENSHOT_STORAGE_S3_PUBLIC_URL: z.string().optional(),
   SCREENSHOT_STORAGE_S3_PREFIX: z.string().optional(),
+  // How the screenshot URL we hand back is meant to be fetched:
+  //   public -- bare object URL; the bucket must be world readable (default,
+  //             and what the old Supabase implementation assumed)
+  //   signed -- presigned S3 GET; bucket stays private, link expires
+  //   proxy  -- URL points at this API, which streams the object back; bucket
+  //             stays private and the link does not expire
+  SCREENSHOT_STORAGE_URL_MODE: z
+    .enum(["public", "signed", "proxy"])
+    .default("public"),
+  // SigV4 caps presigned URLs at 7 days; longer values are clamped.
+  SCREENSHOT_STORAGE_S3_SIGNED_URL_TTL: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3600),
+  // Sign against this endpoint when the bucket is reachable from the caller on
+  // a different host than the API uses internally (MinIO behind a published
+  // port). The signature covers the host, so rewriting it afterwards would
+  // invalidate it -- hence a separate endpoint rather than reusing PUBLIC_URL.
+  SCREENSHOT_STORAGE_S3_SIGNING_ENDPOINT: z.string().optional(),
+  // proxy mode: base URL of this API as callers see it, and the HMAC secret
+  // used to sign object keys (same scheme as PARSE_UPLOAD_REF_SECRET).
+  SCREENSHOT_PROXY_BASE_URL: z.string().url().optional(),
+  SCREENSHOT_PROXY_SECRET: emptyStringAsUndefined(z.string().trim().min(1)),
   SCREENSHOT_UPLOAD_CONCURRENCY: z.coerce
     .number()
     .int()

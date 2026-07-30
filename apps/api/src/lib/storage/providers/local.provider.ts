@@ -39,4 +39,23 @@ export class LocalStorageProvider implements StorageProvider {
     const filePath = path.join(this.directory, key);
     await fs.unlink(filePath).catch(() => {});
   }
+
+  async fetch(key: string) {
+    const filePath = path.join(this.directory, key);
+    // The key comes from a signed token, but resolve it anyway: a key that
+    // escapes the storage directory must never be served.
+    const resolved = path.resolve(filePath);
+    if (
+      resolved !== path.resolve(this.directory) &&
+      !resolved.startsWith(path.resolve(this.directory) + path.sep)
+    ) {
+      return null;
+    }
+
+    try {
+      return { body: await fs.readFile(resolved) };
+    } catch {
+      return null;
+    }
+  }
 }

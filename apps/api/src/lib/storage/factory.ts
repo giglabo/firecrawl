@@ -50,6 +50,9 @@ export function resolveProvider(
       secretAccessKey: config.SCREENSHOT_STORAGE_S3_SECRET_ACCESS_KEY,
       forcePathStyle: !!config.SCREENSHOT_STORAGE_S3_FORCE_PATH_STYLE,
       publicUrl: config.SCREENSHOT_STORAGE_S3_PUBLIC_URL,
+      signedUrls: config.SCREENSHOT_STORAGE_URL_MODE === "signed",
+      signedUrlTtlSeconds: config.SCREENSHOT_STORAGE_S3_SIGNED_URL_TTL,
+      signingEndpoint: config.SCREENSHOT_STORAGE_S3_SIGNING_ENDPOINT,
     });
   } else if (
     config.SCREENSHOT_STORAGE_PROVIDER === "local" &&

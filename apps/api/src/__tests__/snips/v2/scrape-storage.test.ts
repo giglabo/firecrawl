@@ -37,11 +37,12 @@ describeIf(TEST_SELF_HOST && HAS_PLAYWRIGHT)("Screenshot storage", () => {
       );
 
       expect(response.screenshot).toBeDefined();
-      // Without storage config, screenshot is either base64 data URI or supabase URL
-      expect(
-        response.screenshot!.startsWith("data:") ||
-          response.screenshot!.startsWith("https://"),
-      ).toBe(true);
+      // With no per-request storage the result depends on env config: a data
+      // URI when none is set, otherwise whatever the env provider and
+      // SCREENSHOT_STORAGE_URL_MODE produce (object URL, presigned, or a proxy
+      // link back through this API). scrape-screenshot-url.test.ts is the one
+      // that checks such a URL actually serves bytes.
+      expect(response.screenshot).toMatch(/^(data:|https?:\/\/)/);
     },
     scrapeTimeout,
   );
@@ -122,6 +123,13 @@ describeIf(TEST_SELF_HOST && HAS_PLAYWRIGHT)("Screenshot storage", () => {
       expect(response.screenshot!.startsWith("http")).toBe(true);
       expect(response.screenshot).not.toContain("data:");
       expect(response.screenshot).toContain("screenshots/");
+
+      // ...and it must actually serve the image. Asserting only on the shape
+      // of the string is what let a private-bucket deployment ship URLs that
+      // every client got a 403 from.
+      const res = await fetch(response.screenshot!);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(/^image\//);
     },
     scrapeTimeout,
   );
