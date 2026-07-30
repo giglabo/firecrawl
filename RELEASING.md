@@ -36,7 +36,7 @@ build in validate-only mode (`load`, not `push`).
 Run before tagging (see also `CLAUDE.md` and the `merge-upstream` skill):
 
 ```bash
-node scripts/verify-fork-invariants.mjs          # must be 46/46
+node scripts/verify-fork-invariants.mjs          # must be 53/53
 # tsc needs the native lib built first (regenerates the napi .d.ts):
 (cd apps/api/native && pnpm install)
 (cd apps/api && pnpm install --ignore-scripts && ./node_modules/.bin/tsc --noEmit)
