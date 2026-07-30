@@ -2,7 +2,8 @@
 # our source is *present* and our schemas still *parse*; this proves the features
 # actually *work* end-to-end: a real scrape through the standalone playwright
 # engine, real scroll screenshots, real screenshot upload to S3/MinIO, the
-# configurable waitUntil, per-request proxy validation, and byte tracking.
+# configurable waitUntil, per-request proxy validation, byte tracking, and that
+# the async NuQ queue dispatches with no RabbitMQ, as we ship it.
 #
 # It is a deliberately trimmed clone of upstream's `Server Test Suite`: the same
 # proven self-hosted boot (native lib, go html-to-md, playwright-service, local
@@ -29,10 +30,10 @@ jobs:
         image: redis
         ports:
           - 6379:6379
-      rabbitmq:
-        image: rabbitmq
-        ports:
-          - 5672:5672
+      # No rabbitmq service on purpose. docker-compose.selfhost.yaml ships with
+      # NUQ_RABBITMQ_URL empty, so this gate must run the broker-less NuQ path;
+      # starting a broker here is what hid the prefetch livelock (see
+      # scrape-async-queue.test.ts).
     env:
       HOST: 0.0.0.0
       TEST_SUITE_SELF_HOSTED: true
@@ -41,7 +42,6 @@ jobs:
       TEST_TEAM_ID: bypass
       PLAYWRIGHT_MICROSERVICE_URL: http://localhost:3003/scrape
       NUQ_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-      NUQ_RABBITMQ_URL: amqp://localhost:5672
       USE_GO_MARKDOWN_PARSER: true
       ALLOW_LOCAL_WEBHOOKS: true
       FIRECRAWL_LOG_TO_FILE: true

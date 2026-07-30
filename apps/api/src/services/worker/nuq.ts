@@ -1249,6 +1249,17 @@ class NuQ<JobData = any, JobReturnValue = any> {
   // === Prefetch
 
   public async prefetchJobs(_logger: Logger = logger): Promise<number> {
+    // Prefetching only makes sense when there is a broker to prefetch into.
+    // Without one, the UPDATE below would flip jobs to 'active' and then drop
+    // them (sendJobPrefetch has no sender), leaving them invisible to
+    // getJobToProcess, which only ever selects 'queued'. The lock reaper would
+    // return them to 'queued' a minute later and this loop would claim them
+    // again -- a livelock that hangs every async job. Self-hosted deployments
+    // run with NUQ_RABBITMQ_URL unset, so bail out before touching the queue.
+    if (!config.NUQ_RABBITMQ_URL) {
+      return 0;
+    }
+
     const start = Date.now();
     try {
       const jobs = (

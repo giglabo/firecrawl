@@ -876,8 +876,10 @@ async function startServices(command?: string[]): Promise<Services> {
     ),
   );
 
+  // No broker means nothing to prefetch into -- see NuQ.prefetchJobs(). Running
+  // the worker anyway is not merely useless, it starves the real workers.
   const nuqPrefetchWorker =
-    config.NUQ_BACKEND === "fdb"
+    config.NUQ_BACKEND === "fdb" || !config.NUQ_RABBITMQ_URL
       ? undefined
       : execForward(
           "nuq-prefetch-worker",
