@@ -20,6 +20,7 @@ import {
   parseUploadRefPayloadMiddleware,
   parseUploadUrlController,
 } from "../controllers/v2/parse-upload";
+import { screenshotProxyController } from "../controllers/v2/screenshot-proxy";
 import { batchScrapeController } from "../controllers/v2/batch-scrape";
 import { crawlController } from "../controllers/v2/crawl";
 import { crawlParamsPreviewController } from "../controllers/v2/crawl-params-preview";
@@ -173,6 +174,11 @@ registerMcpActionLogReadRoute(
   v2Router,
   authMiddleware(RateLimiterMode.Account),
 );
+
+// Screenshot proxy (SCREENSHOT_STORAGE_URL_MODE=proxy). Deliberately has no
+// auth middleware: the signed token in the path is the credential, matching
+// how /parse/upload/:uploadId is gated. Returns 404 when the mode is off.
+v2Router.get("/screenshot/:token", wrap(screenshotProxyController));
 
 v2Router.post(
   "/search",

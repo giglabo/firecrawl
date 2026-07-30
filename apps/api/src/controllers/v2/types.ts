@@ -759,6 +759,15 @@ const baseScrapeOptions = z.strictObject({
           secretAccessKey: z.string(),
           forcePathStyle: z.boolean().optional(),
           publicUrl: z.string().optional(),
+          // Hand back a presigned GET URL instead of a bare object URL, so a
+          // caller bringing their own bucket does not have to make it public.
+          // The global equivalent is SCREENSHOT_STORAGE_URL_MODE=signed.
+          signedUrls: z.boolean().optional(),
+          signedUrlTtlSeconds: z.number().int().positive().optional(),
+          // Sign against this host when the bucket is reachable elsewhere than
+          // `endpoint`; the signature covers the host, so it cannot be swapped
+          // in afterwards.
+          signingEndpoint: z.string().optional(),
         })
         .optional(),
       local: z

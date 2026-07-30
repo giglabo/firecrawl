@@ -681,12 +681,57 @@ check(
 // Group: tests -- our e2e coverage must still be present
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Group: screenshot URL modes
+//
+// The proxy route is our ONE deviation from "no new public routes" (see
+// CLAUDE.md). Upstream has no reason to keep it, so a merge that rewrites
+// routes/v2.ts can drop it and screenshots silently go back to bare object
+// URLs -- which 403 against a private bucket.
+// ---------------------------------------------------------------------------
+
+check(
+  "screenshot-url",
+  "proxy-route",
+  "GET /v2/screenshot/:token is registered",
+  mustContain(`${API}/routes/v2.ts`, [
+    "screenshotProxyController",
+    '"/screenshot/:token"',
+  ]),
+);
+
+check(
+  "screenshot-url",
+  "proxy-helpers",
+  "signed proxy token helpers survive",
+  mustContain(`${API}/lib/storage/proxy-url.ts`, [
+    "verifyScreenshotToken",
+    "timingSafeEqual",
+    // Proxy links must stay expirable -- an unauthenticated token that never
+    // dies is readable forever once it leaks.
+    "expired",
+    "payload.exp",
+  ]),
+);
+
+check(
+  "screenshot-url",
+  "url-mode",
+  "SCREENSHOT_STORAGE_URL_MODE offers public/signed/proxy",
+  mustContain(`${API}/config.ts`, [
+    "SCREENSHOT_STORAGE_URL_MODE",
+    '"public", "signed", "proxy"',
+  ]),
+);
+
 for (const name of [
   "scrape-dna",
   "scrape-storage",
   "scrape-waituntil",
   "scrape-proxy",
   "scrape-bytes-downloaded",
+  "scrape-async-queue",
+  "scrape-screenshot-url",
 ]) {
   check("tests", `snips:${name}`, `${name}.test.ts exists`, () =>
     fileExists(`${API}/__tests__/snips/v2/${name}.test.ts`)

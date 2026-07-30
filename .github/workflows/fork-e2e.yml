@@ -53,6 +53,20 @@ jobs:
       MINIO_BUCKET: screenshots
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
+      # Private bucket for the presigned-URL tests; see the MinIO step below.
+      MINIO_PRIVATE_BUCKET: screenshots-private
+      # Env-level storage in proxy mode: requests that do NOT carry their own
+      # `storage` block get a URL back through the API, which scrape-screenshot-url
+      # then actually fetches. The per-request MinIO test is unaffected -- proxy
+      # mode only applies to the env-configured provider.
+      SCREENSHOT_STORAGE_PROVIDER: s3
+      SCREENSHOT_STORAGE_S3_ENDPOINT: http://localhost:9000
+      SCREENSHOT_STORAGE_S3_BUCKET: screenshots
+      SCREENSHOT_STORAGE_S3_ACCESS_KEY_ID: minioadmin
+      SCREENSHOT_STORAGE_S3_SECRET_ACCESS_KEY: minioadmin
+      SCREENSHOT_STORAGE_S3_FORCE_PATH_STYLE: "true"
+      SCREENSHOT_STORAGE_URL_MODE: proxy
+      SCREENSHOT_PROXY_BASE_URL: http://127.0.0.1:3002
       FDB_VERSION: 7.3.63
     steps:
       - uses: actions/checkout@v5
@@ -149,9 +163,24 @@ jobs:
           pnpx wait-on tcp:9000 -t 30s
           ok=0
           for i in $(seq 1 15); do
+            # `anonymous set download` mirrors docker-compose.selfhost.yaml.
+            # Without it the per-request MinIO test uploads fine but its URL
+            # 403s -- the exact failure this suite now asserts against.
+            # `screenshots` is public (mirrors docker-compose.selfhost.yaml) so
+            # the public-URL path is genuinely fetchable. `screenshots-private`
+            # is deliberately left private: it is what the presigned-URL tests
+            # run against, and a control assertion checks its plain URL 403s --
+            # otherwise a broken signer would still "pass" against a public
+            # bucket.
             if docker run --rm --network host \
                  -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
-                 minio/mc:latest mb --ignore-existing local/screenshots; then
+                 minio/mc:latest mb --ignore-existing local/screenshots \
+               && docker run --rm --network host \
+                 -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
+                 minio/mc:latest anonymous set download local/screenshots \
+               && docker run --rm --network host \
+                 -e MC_HOST_local=http://minioadmin:minioadmin@127.0.0.1:9000 \
+                 minio/mc:latest mb --ignore-existing local/screenshots-private; then
               ok=1; break
             fi
             echo "minio not ready, retry $i"; sleep 2
@@ -160,6 +189,9 @@ jobs:
 
       - name: Generate parse upload ref secret
         run: echo "PARSE_UPLOAD_REF_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Generate screenshot proxy secret
+        run: echo "SCREENSHOT_PROXY_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
       - name: Start playwright-service
         run: |

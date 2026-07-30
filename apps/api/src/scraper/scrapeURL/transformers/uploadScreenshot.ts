@@ -7,6 +7,10 @@ import { config } from "../../../config";
 import { Meta } from "..";
 import { Document } from "../../../controllers/v1/types";
 import { resolveProvider } from "../../../lib/storage/factory";
+import {
+  buildScreenshotProxyUrl,
+  isScreenshotProxyMode,
+} from "../../../lib/storage/proxy-url";
 import { hasFormatOfType } from "../../../lib/format-utils";
 import { convertImageToWebp } from "@mendable/firecrawl-rs";
 
@@ -116,6 +120,25 @@ async function uploadSingleScreenshot(
     try {
       meta.logger.debug("Uploading screenshot to storage provider...");
       const result = await provider.upload(buffer, key, contentType);
+      // Proxy mode is storage-agnostic, so it is applied here rather than in
+      // each provider: the provider still reports its own URL, we just hand
+      // the caller a link back through this API instead.
+      //
+      // Only for the env-configured provider. The proxy route resolves storage
+      // from env, so a per-request bucket would be signed here and then looked
+      // up in the wrong place -- a guaranteed 404.
+      if (!meta.options.storage && isScreenshotProxyMode()) {
+        try {
+          return {
+            url: buildScreenshotProxyUrl(result.key),
+            path: result.path,
+          };
+        } catch (error) {
+          meta.logger.error(
+            `Screenshot proxy mode is enabled but misconfigured: ${error}`,
+          );
+        }
+      }
       return { url: result.url, path: result.path };
     } catch (error) {
       meta.logger.error(
